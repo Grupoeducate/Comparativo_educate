@@ -1,0 +1,65 @@
+{
+  "periodica": {
+    "puntaje_minimo": 1,
+    "puntaje_maximo": 5,
+
+    "niveles": [
+      {
+        "orden": 1,
+        "nombre": "Bajo",
+        "minimo": 1,
+        "maximo": 3.59
+      },
+      {
+        "orden": 2,
+        "nombre": "Basico",
+        "minimo": 3.6,
+        "maximo": 3.99
+      },
+      {
+        "orden": 3,
+        "nombre": "Alto",
+        "minimo": 4,
+        "maximo": 4.79
+      },
+      {
+        "orden": 4,
+        "nombre": "Superior",
+        "minimo": 4.8,
+        "maximo": 5
+      }
+    ]
+  },
+
+  "saber": {
+    "puntaje_minimo": 0,
+    "puntaje_maximo": 500,
+
+    "niveles": [
+      {
+        "orden": 1,
+        "nombre": "Insuficiente",
+        "minimo": 0,
+        "maximo": 180.9
+      },
+      {
+        "orden": 2,
+        "nombre": "Minimo",
+        "minimo": 181,
+        "maximo": 269.9
+      },
+      {
+        "orden": 3,
+        "nombre": "Satisfactorio",
+        "minimo": 270,
+        "maximo": 349.9
+      },
+      {
+        "orden": 4,
+        "nombre": "Avanzado",
+        "minimo": 350,
+        "maximo": 500
+      }
+    ]
+  }
+}

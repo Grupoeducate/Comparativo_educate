@@ -1,0 +1,153 @@
+Prompt para convertir Excel de Misión Alpha, Beta, Gamma o pruebas Saber a CSV compatible con Visor Educate 360°
+
+OBJETIVO
+Analizar todos los archivos Excel suministrados (Misión Alfa, Misión Beta, Misión Gamma, Saber u otras pruebas institucionales) y generar archivos CSV consolidados para el proyecto Visor Educate 360°.
+
+REGLAS DE TRANSFORMACIÓN
+
+1. Archivos de entrada
+- Procesar todos los archivos Excel encontrados.
+- Formatos admitidos: .xlsx y .xls.
+
+2. Columnas obligatorias
+Conservar siempre:
+- DOCUMENTO
+- ESTUDIANTE
+- PUNTAJE
+- DESEMPEÑO
+
+3. Columnas a eliminar
+Eliminar completamente:
+- PUESTO
+
+4. Metadatos derivados del nombre del archivo
+Agregar:
+- PRUEBA
+- GRADO
+- GRUPO
+
+Ejemplo:
+INFORME GENERAL EXCEL COL DE CAMBRIDGE SEDE LA CALERA8-803-JU-1-16 MISION GAMMA 8.xlsx
+
+Generar:
+PRUEBA=Gamma
+GRADO=8
+GRUPO=8-3
+
+Si no puede inferirse con certeza, dejar vacío.
+
+5. Limpieza de rankings
+Transformar:
+4.9 (1) -> 4.9
+4.8 (2) -> 4.8
+4.7 (3) -> 4.7
+
+Eliminar cualquier marcador de posición (n).
+
+6. Conversión numérica
+Todas las columnas académicas deben quedar como valores numéricos cuando corresponda.
+
+7. Áreas y componentes académicos
+Conservar todas las áreas y componentes detectados.
+No eliminar columnas académicas adicionales.
+
+Ejemplos:
+- LENGUAJE
+- LECTURA CRITICA
+- MATEMATICAS
+- ARITMETICA
+- GEOMETRIA
+- ESTADISTICA
+- CIENCIAS NATURALES
+- BIOLOGIA
+- QUIMICA
+- FISICA
+- CIENCIA TECNOLOGIA Y SOCIEDAD
+- SOCIALES Y CIUDADANAS
+- CIENCIAS SOCIALES
+- COMPETENCIAS CIUDADANAS
+- INGLES
+
+8. Nombres de columnas
+Mantener exactamente los nombres originales.
+No traducir, abreviar, renombrar ni homologar.
+
+9. Homologación de estudiantes
+La clave principal será DOCUMENTO.
+No eliminar duplicados.
+No fusionar registros.
+Conservar todos los intentos y pruebas.
+
+10. Consolidación por tipo de prueba
+Después de leer y transformar todos los archivos:
+- Consolidar todos los registros de Misión Alfa en un único archivo llamado:
+  mision_alfa.csv
+- Consolidar todos los registros de Misión Beta en un único archivo llamado:
+  mision_beta.csv
+- Consolidar todos los registros de Misión Gamma en un único archivo llamado:
+  mision_gamma.csv
+- Consolidar todos los registros de Saber en un único archivo llamado:
+  saber.csv
+
+Cada archivo debe contener la información combinada de todos los grados y grupos pertenecientes a esa prueba para el mismo colegio.
+
+11. Estructura final de los CSV
+Columnas iniciales:
+PRUEBA
+GRADO
+GRUPO
+DOCUMENTO
+ESTUDIANTE
+PUNTAJE
+DESEMPEÑO
+
+Seguidas por todas las áreas académicas detectadas.
+
+12. Trazabilidad
+Agregar una columna adicional:
+ARCHIVO_ORIGEN
+
+Con el nombre exacto del archivo Excel desde el cual proviene cada registro.
+
+13. Control de calidad
+Generar un reporte llamado:
+dashboard_data_quality_report.txt
+
+Incluir:
+- Número de archivos procesados.
+- Número de estudiantes únicos.
+- Número de registros exportados.
+- Número de columnas académicas detectadas.
+- Listado de columnas encontradas.
+- Inconsistencias detectadas.
+
+Reportar:
+- DOCUMENTO vacío.
+- ESTUDIANTE vacío.
+- PUNTAJE vacío.
+- DESEMPEÑO vacío.
+- Valores no numéricos en áreas académicas.
+- Prueba no identificada.
+- Grado no identificado.
+- Grupo no identificado.
+
+14. Restricciones
+NO:
+- Recalcular puntajes.
+- Recalcular desempeños.
+- Modificar nombres de estudiantes.
+- Corregir documentos.
+- Eliminar estudiantes.
+- Eliminar áreas.
+- Eliminar componentes.
+- Eliminar registros repetidos.
+- Corregir grupos.
+- Inferir información inexistente.
+
+RESULTADO ESPERADO
+Generar:
+- mision_alfa.csv
+- mision_beta.csv
+- mision_gamma.csv
+- saber.csv
+- dashboard_data_quality_report.txt

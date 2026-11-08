@@ -1,0 +1,41 @@
+{
+  "areas": [
+    {
+      "nombre": "Lenguaje",
+      "orden": 1,
+      "componentes": []
+    },
+    {
+      "nombre": "Matematicas",
+      "orden": 2,
+      "componentes": [
+        "Estadistica",
+        "Geometria",
+        "Aritmetica"
+      ]
+    },
+    {
+      "nombre": "Ciencias Naturales",
+      "orden": 3,
+      "componentes": [
+        "Biologia",
+        "Fisica",
+        "Quimica",
+        "CTS"
+      ]
+    },
+    {
+      "nombre": "Sociales",
+      "orden": 4,
+      "componentes": [
+        "Ciencias Sociales",
+        "Competencias Ciudadanas"
+      ]
+    },
+    {
+      "nombre": "Ingles",
+      "orden": 5,
+      "componentes": []
+    }
+  ]
+}

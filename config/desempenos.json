@@ -1,0 +1,39 @@
+{
+  "periodica": {
+    "Bajo": {
+      "color": "#bf0000",
+      "orden": 1
+    },
+    "Basico": {
+      "color": "#ffbf00",
+      "orden": 2
+    },
+    "Alto": {
+      "color": "#01b1f0",
+      "orden": 3
+    },
+    "Superior": {
+      "color": "#01af51",
+      "orden": 4
+    }
+  },
+
+  "saber": {
+    "Insuficiente": {
+      "color": "#bf0000",
+      "orden": 1
+    },
+    "Minimo": {
+      "color": "#ffbf00",
+      "orden": 2
+    },
+    "Satisfactorio": {
+      "color": "#01b1f0",
+      "orden": 3
+    },
+    "Avanzado": {
+      "color": "#01af51",
+      "orden": 4
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "pruebas": [
+    {
+      "id": "ALFA",
+      "nombre": "Misión Alfa",
+      "carpeta": "mision_alfa",
+      "tipo": "periodica",
+      "orden": 1
+    },
+    {
+      "id": "BETA",
+      "nombre": "Misión Beta",
+      "carpeta": "mision_beta",
+      "tipo": "periodica",
+      "orden": 2
+    },
+    {
+      "id": "GAMMA",
+      "nombre": "Misión Gamma",
+      "carpeta": "mision_gamma",
+      "tipo": "periodica",
+      "orden": 3
+    }
+  ]
+}

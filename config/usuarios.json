@@ -1,0 +1,16 @@
+{
+  "usuarios": [
+    {
+      "dane": "425377076576",
+      "clave": "4587",
+      "nombre": "Colegio Cambridge",
+      "ciudad": "Bogotá"
+    },
+    {
+      "dane": "080001000001",
+      "clave": "1234",
+      "nombre": "Colegio Departamental San José",
+      "ciudad": "Barranquilla"
+    }
+  ]
+}

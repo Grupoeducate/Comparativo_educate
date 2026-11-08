@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visor Educate 360° | Plataforma de Analítica Educativa</title>
+  
+  <!-- Hojas de Estilo -->
+  <link rel="stylesheet" href="css/styles.css">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="assets/logo.png">
+
+  <!-- Precarga y soporte transparente para apertura directa o hosting web -->
+  <script src="config/config_data.js"></script>
+  <script src="data/425377076576/datos.js"></script>
+
+  <!-- Librerías Externas vía CDN para Gráficos y Exportación (con respaldos internos autónomos) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+  <!-- ==========================================================================
+       Loader Global de Inicialización
+       ========================================================================== -->
+  <div id="global-loader" style="position:fixed; inset:0; background:#0f172a; z-index:999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff;">
+    <img src="assets/logo.png" alt="Logo" style="width:72px; height:72px; border-radius:14px; margin-bottom:1rem; background:#fff; padding:6px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+    <h2 style="font-size:1.35rem; font-weight:700; margin-bottom:0.5rem;">Visor Educate 360°</h2>
+    <p style="font-size:0.85rem; color:#94a3b8;">Cargando analítica institucional...</p>
+  </div>
+
+  <!-- ==========================================================================
+       Pantalla de Autenticación (Sección 5 de informe.md: DANE + PIN 4 dígitos)
+       ========================================================================== -->
+  <div id="auth-overlay" class="auth-overlay" style="display:none;">
+    <div class="auth-modal">
+      <div class="auth-modal-header">
+        <img src="assets/logo.png" alt="Educate 360°" class="auth-logo">
+        <h3>Visor Educate 360°</h3>
+        <p>Panel Ejecutivo de Analítica Educativa</p>
+      </div>
+      <div class="auth-modal-body">
+        <div id="login-error" class="auth-error">Código DANE o clave de 4 dígitos incorrecta.</div>
+        <form id="login-form">
+          <div class="form-group">
+            <label for="login-dane">Código DANE Institucional</label>
+            <input type="text" id="login-dane" placeholder="Ingrese el código DANE" value="" required autofocus autocomplete="username">
+            <div class="auth-hint">Código asignado por el Ministerio de Educación</div>
+          </div>
+          <div class="form-group">
+            <label for="login-pin">Clave de Acceso (4 dígitos)</label>
+            <input type="password" id="login-pin" placeholder="••••" maxlength="4" value="" required autocomplete="current-password">
+            <div class="auth-hint">Clave numérica de 4 dígitos institucional (config/usuarios.json)</div>
+          </div>
+          <button type="submit" class="btn-login">Ingresar al Visor</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       Estructura Principal del Visor
+       ========================================================================== -->
+  <div id="app-container">
+    
+    <!-- Barra Lateral de Navegación -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <img src="assets/logo.png" alt="Logo" class="brand-logo">
+        <div class="brand-text">
+          <h1>Educate 360°</h1>
+          <span>Panel Directivo</span>
+        </div>
+      </div>
+
+      <div class="institution-pill">
+        <div class="inst-name" id="top-inst-name">Colegio Cambridge</div>
+        <div class="inst-details">
+          <span id="top-inst-dane">DANE: 425377076576</span>
+          <span id="top-inst-year">Año: 2026</span>
+        </div>
+      </div>
+
+      <!-- Menú de los 8 Módulos (informe.md Sección 13) -->
+      <ul class="nav-menu">
+        <li class="nav-section-title">Análisis General</li>
+        <li>
+          <a href="#dashboard" class="nav-item active" data-module="dashboard">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+            </svg>
+            Dashboard Ejecutivo
+          </a>
+        </li>
+        <li>
+          <a href="#evolucion" class="nav-item" data-module="evolucion">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+            </svg>
+            Evolución Institucional
+          </a>
+        </li>
+        <li>
+          <a href="#ranking" class="nav-item" data-module="ranking">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
+            </svg>
+            Ranking Institucional
+          </a>
+        </li>
+
+        <li class="nav-section-title">Detalle Pedagógico</li>
+        <li>
+          <a href="#areas" class="nav-item" data-module="areas">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+            </svg>
+            Seguimiento por Área
+          </a>
+        </li>
+        <li>
+          <a href="#desempenos" class="nav-item" data-module="desempenos">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+            Distribución Desempeños
+          </a>
+        </li>
+        <li>
+          <a href="#ciclos" class="nav-item" data-module="ciclos">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+            </svg>
+            Consulta por Ciclo
+          </a>
+        </li>
+        <li>
+          <a href="#trazabilidad" class="nav-item" data-module="trazabilidad">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+            Trazabilidad Estudiantes
+          </a>
+        </li>
+
+        <li class="nav-section-title">Herramientas</li>
+        <li>
+          <a href="#exportacion" class="nav-item" data-module="exportacion">
+            <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Exportación & Reportes
+          </a>
+        </li>
+      </ul>
+
+      <div class="sidebar-footer">
+        <div class="user-badge">
+          <div class="user-avatar">AD</div>
+          <div class="user-info">
+            <span class="role">Directivo / Rector</span>
+            <span class="dane">Acceso Institucional</span>
+          </div>
+        </div>
+        <button id="btn-logout" class="btn-logout" title="Cerrar Sesión">
+          <svg style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+          </svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Contenido Principal con Barra Superior de Filtros -->
+    <div class="main-wrapper">
+      
+      <!-- ======================================================================
+           Barra Superior de Filtros Globales (informe.md Sección 12)
+           ====================================================================== -->
+      <header class="top-filter-bar">
+        <div class="filters-header">
+          <div class="filters-title-group">
+            <span class="filters-title">Filtros Globales de Consulta</span>
+            <span id="active-filters-count" class="filter-badge-count" style="display:none;">0 activos</span>
+          </div>
+        </div>
+
+        <div class="filters-grid">
+          <!-- 1. Tipo de Prueba (Por defecto 'periodica' al no haber Saber) -->
+          <div class="filter-control">
+            <label for="filter-tipo-prueba">Tipo de Prueba</label>
+            <select id="filter-tipo-prueba" class="filter-select">
+              <option value="todos">Todos los Tipos</option>
+              <option value="periodica" selected>Periódica (Alfa, Beta, Gamma)</option>
+              <option value="saber">Pruebas Saber</option>
+            </select>
+          </div>
+
+          <!-- 2. Prueba Específica -->
+          <div class="filter-control">
+            <label for="filter-prueba">Prueba</label>
+            <select id="filter-prueba" class="filter-select">
+              <option value="todos">Todas las Pruebas</option>
+            </select>
+          </div>
+
+          <!-- 3. Ciclo -->
+          <div class="filter-control">
+            <label for="filter-ciclo">Ciclo Educativo</label>
+            <select id="filter-ciclo" class="filter-select">
+              <option value="todos">Todos los Ciclos</option>
+              <option value="1">Ciclo 1 (1°, 2°, 3°)</option>
+              <option value="2">Ciclo 2 (4°, 5°)</option>
+              <option value="3">Ciclo 3 (6°, 7°)</option>
+              <option value="4">Ciclo 4 (8°, 9°)</option>
+              <option value="5">Ciclo 5 (10°, 11°)</option>
+            </select>
+          </div>
+
+          <!-- 4. Grado -->
+          <div class="filter-control">
+            <label for="filter-grado">Grado</label>
+            <select id="filter-grado" class="filter-select">
+              <option value="todos">Todos los Grados</option>
+            </select>
+          </div>
+
+          <!-- 5. Grupo -->
+          <div class="filter-control">
+            <label for="filter-grupo">Grupo</label>
+            <select id="filter-grupo" class="filter-select">
+              <option value="todos">Todos los Grupos</option>
+            </select>
+          </div>
+
+          <!-- 6. Área -->
+          <div class="filter-control">
+            <label for="filter-area">Área Académica</label>
+            <select id="filter-area" class="filter-select">
+              <option value="todos">Todas las Áreas</option>
+              <option value="Lenguaje">Lenguaje</option>
+              <option value="Matematicas">Matemáticas</option>
+              <option value="Ciencias Naturales">Ciencias Naturales</option>
+              <option value="Sociales">Sociales y Ciudadanas</option>
+              <option value="Ingles">Inglés</option>
+            </select>
+          </div>
+
+          <!-- 7. Búsqueda Rápida de Estudiante -->
+          <div class="filter-control">
+            <label for="input-global-search">Buscar Estudiante</label>
+            <input type="text" id="input-global-search" class="filter-input" placeholder="Nombre o documento...">
+          </div>
+        </div>
+
+        <!-- Botones de Acción Debajo de los Filtros (según solicitud de mejora) -->
+        <div class="filters-bottom-actions">
+          <button id="btn-apply-filters" class="btn-primary" style="background:#0284c7; padding:0.45rem 1.3rem; font-size:0.82rem; font-weight:700;">
+            <svg style="width:15px; height:15px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            Consultar
+          </button>
+          <button id="btn-reset-filters" class="btn-reset-filters" title="Restablecer todos los filtros" style="padding:0.45rem 1rem; font-size:0.8rem;">
+            <svg style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Limpiar Filtros
+          </button>
+          <button id="btn-quick-export" class="btn-secondary" style="padding:0.45rem 1rem; font-size:0.8rem;" onclick="App.switchModule('exportacion')">
+            <svg style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Exportar a Excel
+          </button>
+        </div>
+      </header>
+
+      <!-- ======================================================================
+           Área de Vistas de Módulos (informe.md Sección 13)
+           ====================================================================== -->
+      <main class="content-area">
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 1: Dashboard Ejecutivo
+             -------------------------------------------------------------------- -->
+        <section id="view-dashboard" class="view-section active">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Dashboard Ejecutivo</h2>
+              <p>Resumen gerencial de indicadores y rendimiento académico global</p>
+            </div>
+          </div>
+
+          <!-- KPI Cards Principales (Iconos removidos según solicitud) -->
+          <div class="kpi-grid">
+            <div class="kpi-card info">
+              <div class="kpi-header">
+                <span class="kpi-label">Promedio Institucional</span>
+              </div>
+              <div class="kpi-value" id="kpi-promedio-general">-</div>
+              <div class="kpi-footer">
+                <span id="kpi-promedio-badge" class="badge-desempeno badge-superior">Escala 1.0 a 5.0</span>
+              </div>
+            </div>
+
+            <div class="kpi-card success">
+              <div class="kpi-header">
+                <span class="kpi-label">Mejor Área Académica</span>
+              </div>
+              <div class="kpi-value" id="kpi-mejor-area-nombre" style="font-size:1.35rem;">-</div>
+              <div class="kpi-footer">
+                <span>Puntaje:</span>
+                <strong id="kpi-mejor-area-score">-</strong>
+              </div>
+            </div>
+
+            <div class="kpi-card danger">
+              <div class="kpi-header">
+                <span class="kpi-label">Área Prioritaria / Crítica</span>
+              </div>
+              <div class="kpi-value" id="kpi-area-critica-nombre" style="font-size:1.35rem;">-</div>
+              <div class="kpi-footer">
+                <span>Puntaje:</span>
+                <strong id="kpi-area-critica-score">-</strong>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Estudiantes Evaluados</span>
+              </div>
+              <div class="kpi-value" id="kpi-estudiantes-total">-</div>
+              <div class="kpi-footer">
+                <span>Cobertura Institucional Única</span>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Grados y Grupos</span>
+              </div>
+              <div class="kpi-value" style="font-size:1.5rem;">
+                <span id="kpi-grados-total">-</span> <span style="font-size:0.85rem; font-weight:normal; color:var(--text-muted);">grados /</span>
+                <span id="kpi-grupos-total">-</span> <span style="font-size:0.85rem; font-weight:normal; color:var(--text-muted);">grupos</span>
+              </div>
+              <div class="kpi-footer">
+                <span>Muestra Activa Filtrada</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gráficos del Dashboard -->
+          <div class="card-grid">
+            <div class="executive-card col-8">
+              <div class="card-header">
+                <div class="card-title">Promedio Comparativo por Área Académica</div>
+                <div class="card-subtitle">Puntaje escala 1.0 a 5.0 (con valores numéricos directos)</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container">
+                  <canvas id="chart-dashboard-areas"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="executive-card col-4">
+              <div class="card-header">
+                <div class="card-title">Distribución Institucional</div>
+                <div class="card-subtitle">Niveles de desempeño oficial</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 250px;">
+                  <canvas id="chart-dashboard-donut"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title">Resumen de Desempeño por Grado</div>
+                <div class="card-subtitle">Estudiantes evaluados y distribución de desempeño con barra apilada cromática</div>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <div class="table-responsive">
+                  <table class="executive-table">
+                    <thead>
+                      <tr>
+                        <th>Grado</th>
+                        <th>Estudiantes Evaluados</th>
+                        <th>Promedio Global</th>
+                        <th style="min-width:320px;">Desempeños (Bajo / Básico / Alto / Superior) y Distribución Apilada</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dashboard-grades-table-body">
+                      <!-- Renderizado dinámicamente -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 2: Evolución Institucional
+             -------------------------------------------------------------------- -->
+        <section id="view-evolucion" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Evolución Institucional</h2>
+              <p>Trayectoria y crecimiento comparativo: Misión Alfa → Misión Beta → Misión Gamma</p>
+            </div>
+          </div>
+
+          <div class="card-grid">
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title">Curva de Crecimiento Temporal por Pruebas y Áreas</div>
+                <div class="card-subtitle">Evolución de promedios entre aplicaciones. (Toque el nombre de un área para ocultar o mostrar su línea)</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 340px;">
+                  <canvas id="chart-evolucion-general"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title">Matriz Comparativa de Aplicaciones</div>
+                <div class="card-subtitle">Promedios generales y desglose de áreas por prueba</div>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <div class="table-responsive">
+                  <table class="executive-table">
+                    <thead>
+                      <tr>
+                        <th>Prueba</th>
+                        <th>Evaluados</th>
+                        <th>Promedio Global</th>
+                        <th>Variación (Delta)</th>
+                        <th>Lenguaje</th>
+                        <th>Matemáticas</th>
+                        <th>C. Naturales</th>
+                        <th>Sociales</th>
+                        <th>Inglés</th>
+                      </tr>
+                    </thead>
+                    <tbody id="table-evolucion-body">
+                      <!-- Renderizado dinámicamente -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gráfica Vertical Comparativa por Grado y Grupo (Requerimiento 8) -->
+            <div class="executive-card col-12" style="margin-top:1.5rem;">
+              <div class="card-header">
+                <div class="card-title">Comparativo por Grado y Grupo</div>
+                <div class="card-subtitle">Rendimiento por área para cada grupo de los grados seleccionados</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 400px;">
+                  <canvas id="chart-evolucion-grados-grupos"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 3: Ranking Institucional
+             -------------------------------------------------------------------- -->
+        <section id="view-ranking" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Ranking Institucional</h2>
+              <p>Cuadro de honor y listado general de posiciones institucionales</p>
+            </div>
+            <div>
+              <label for="ranking-limit-select" style="font-size:0.75rem; font-weight:700; color:var(--text-muted); margin-right:0.5rem;">Mostrar:</label>
+              <select id="ranking-limit-select" class="filter-select" style="width:auto; display:inline-block;">
+                <option value="10">Top 10</option>
+                <option value="25">Top 25</option>
+                <option value="50">Top 50</option>
+                <option value="all">Ranking Completo</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="executive-card col-12">
+            <div class="card-body" style="padding:0;">
+              <div class="table-responsive">
+                <table class="executive-table">
+                  <thead>
+                    <tr>
+                      <th style="width:60px;">Puesto</th>
+                      <th>Estudiante</th>
+                      <th>Grado</th>
+                      <th>Grupo</th>
+                      <th>Prueba</th>
+                      <th>Puntaje</th>
+                      <th>Desempeño</th>
+                      <th style="width:100px;">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="table-ranking-body">
+                    <!-- Renderizado dinámicamente -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 4: Seguimiento por Área y Componentes
+             -------------------------------------------------------------------- -->
+        <section id="view-areas" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Seguimiento por Área y Componentes</h2>
+              <p>Análisis granular de componentes temáticos y comparativa por grado y grupo</p>
+            </div>
+          </div>
+
+          <!-- Barra de Contexto Pedagógico (Grado y Grupos seleccionados) -->
+          <div id="context-banner-areas"></div>
+
+          <!-- Selector de Área mediante Pestañas -->
+          <div class="area-tabs-container" id="areas-tabs-container">
+            <!-- Pestañas renderizadas dinámicamente -->
+          </div>
+
+          <!-- Desglose de Componentes de la Área Seleccionada -->
+          <div class="components-grid" id="area-components-grid">
+            <!-- Renderizado dinámicamente -->
+          </div>
+
+          <div class="card-grid" style="margin-top:1.5rem;">
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title" id="title-chart-area-components">Comparativa de Componentes y Desglose por Grado / Grupo</div>
+                <div class="card-subtitle" id="subtitle-chart-area-components">Puntajes obtenidos vs máximo esperado</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 320px;">
+                  <canvas id="chart-area-components"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 5: Distribución de Desempeños
+             -------------------------------------------------------------------- -->
+        <section id="view-desempenos" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Distribución de Desempeños</h2>
+              <p>Visualización de concentración en niveles oficiales: Bajo, Básico, Alto y Superior</p>
+            </div>
+          </div>
+
+          <!-- Barra de Contexto Pedagógico (Grado y Grupos seleccionados) -->
+          <div id="context-banner-desempenos"></div>
+
+          <!-- Leyenda Oficial de Colores -->
+          <div class="distribution-legend">
+            <div class="legend-item">
+              <span class="legend-color-box" style="background:var(--color-bajo);"></span>
+              <span>Bajo (#bf0000)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color-box" style="background:var(--color-basico);"></span>
+              <span>Básico (#ffbf00)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color-box" style="background:var(--color-alto);"></span>
+              <span>Alto (#01b1f0)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color-box" style="background:var(--color-superior);"></span>
+              <span>Superior (#01af51)</span>
+            </div>
+          </div>
+
+          <div class="card-grid">
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title" id="title-chart-desempenos-stacked">Distribución Apilada de Desempeños (100% Stacked)</div>
+                <div class="card-subtitle">Proporción de estudiantes en cada nivel de desempeño por grado y grupos</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 360px;">
+                  <canvas id="chart-desempenos-stacked"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="executive-card col-12">
+              <div class="card-header">
+                <div class="card-title">Tabla Detallada de Distribución Numérica y Porcentual</div>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <div class="table-responsive">
+                  <table class="executive-table">
+                    <thead>
+                      <tr>
+                        <th>Categoría</th>
+                        <th>Total Estudiantes</th>
+                        <th>Bajo</th>
+                        <th>Básico</th>
+                        <th>Alto</th>
+                        <th>Superior</th>
+                      </tr>
+                    </thead>
+                    <tbody id="table-desempenos-body">
+                      <!-- Renderizado dinámicamente -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 6: Consulta por Ciclo
+             -------------------------------------------------------------------- -->
+        <section id="view-ciclos" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Consulta por Ciclo Educativo</h2>
+              <p>Comparativas pedagógicas inter-ciclos institucionales y desglose por grado y grupo</p>
+            </div>
+          </div>
+
+          <!-- Barra de Contexto Pedagógico (Grado y Grupos seleccionados) -->
+          <div id="context-banner-ciclos"></div>
+
+          <div class="card-grid">
+            <div class="executive-card col-7">
+              <div class="card-header">
+                <div class="card-title">Comparativa de Rendimiento Inter-ciclos</div>
+                <div class="card-subtitle">Promedio ponderado por ciclo educativo</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container">
+                  <canvas id="chart-ciclos-comparison"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="executive-card col-5">
+              <div class="card-header">
+                <div class="card-title">Estructura Oficial de Ciclos</div>
+                <div class="card-subtitle">Conformación de grados según MEN / Institución</div>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <div class="table-responsive">
+                  <table class="executive-table">
+                    <thead>
+                      <tr>
+                        <th>Ciclo</th>
+                        <th>Grados</th>
+                        <th>Evaluados</th>
+                        <th>Promedio</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody id="table-ciclos-body">
+                      <!-- Renderizado dinámicamente -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gráfica de Desglose de Grados y Grupos por Ciclo cuando se selecciona Todos -->
+            <div class="executive-card col-12" id="card-ciclos-drilldown" style="margin-top:1.25rem;">
+              <div class="card-header">
+                <div class="card-title">Desglose de Todos los Grados y Grupos por Ciclo</div>
+                <div class="card-subtitle">Rendimiento promedio de cada grupo dentro de su ciclo correspondiente</div>
+              </div>
+              <div class="card-body">
+                <div class="chart-container" style="min-height: 350px;">
+                  <canvas id="chart-ciclos-drilldown"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 7: Trazabilidad de Estudiantes
+             -------------------------------------------------------------------- -->
+        <section id="view-trazabilidad" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Trazabilidad de Estudiantes</h2>
+              <p>Seguimiento longitudinal individual a través de las pruebas institucionales</p>
+            </div>
+          </div>
+
+          <!-- Barra de Contexto Pedagógico (Grado y Grupos seleccionados) -->
+          <div id="context-banner-trazabilidad"></div>
+
+          <!-- Buscador Predictivo (Sección 6 y 7 de informe.md: normalización dinámica) -->
+          <div class="search-student-box">
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <input type="text" id="student-search-input" class="input-student-search" placeholder="Buscar por Nombre de Estudiante o Documento (mínimo 2 caracteres)..." autocomplete="off">
+            </div>
+            <div id="student-search-autocomplete" class="student-autocomplete-results"></div>
+          </div>
+
+          <div class="executive-card col-12">
+            <div class="card-header">
+              <div class="card-title">Instrucciones de Consulta Longitudinal</div>
+            </div>
+            <div class="card-body">
+              <p style="font-size:0.88rem; color:var(--text-muted); line-height:1.6;">
+                Escriba el nombre o documento del estudiante en el buscador superior para acceder a su ficha técnica completa.
+                El sistema normaliza automáticamente tildes, mayúsculas y espacios duplicados según el principio oficial de identificación.
+                También puede abrir la ficha de cualquier estudiante desde el <strong>Ranking Institucional</strong> haciendo clic en <em>"Ver Ficha"</em>.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------------------------------------------------
+             MÓDULO 8: Centro de Exportación & Reportes
+             -------------------------------------------------------------------- -->
+        <section id="view-exportacion" class="view-section">
+          <div class="section-header">
+            <div class="section-title-group">
+              <h2>Centro de Exportación & Reportes</h2>
+              <p>Generación de reportes ejecutivos en formato Excel (.xlsx)</p>
+            </div>
+          </div>
+
+          <div class="export-card-grid" style="grid-template-columns: 1fr;">
+            <!-- Tarjeta Excel -->
+            <div class="export-action-card">
+              <div>
+                <div class="export-icon-box icon-box-excel">
+                  <svg style="width:28px; height:28px;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                  </svg>
+                </div>
+                <div class="export-title">Exportar Consulta a Excel (.xlsx)</div>
+                <div class="export-desc">
+                  Descarga todos los registros activos con los filtros aplicados en una hoja de cálculo profesional, conservando todas las áreas, componentes, notas numéricas y metadatos institucionales.
+                </div>
+              </div>
+              <button id="btn-export-excel-action" class="btn-primary" style="background:#16a34a; max-width:260px;">
+                Descargar Excel (.xlsx)
+              </button>
+            </div>
+          </div>
+
+          <!-- Resumen de datos a exportar -->
+          <div class="executive-card col-12" style="margin-top:1.5rem;">
+            <div class="card-header">
+              <div class="card-title">Estado de la Muestra Actual para Exportación</div>
+            </div>
+            <div class="card-body">
+              <div style="font-size:1.1rem; font-weight:700; color:var(--text-main);" id="export-count-records">
+                Calculando registros...
+              </div>
+              <div style="font-size:0.82rem; color:var(--text-muted); margin-top:0.35rem;" id="export-filter-summary">
+                Filtros activos aplicados.
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       Modal de Ficha y Trazabilidad del Estudiante (Requerimiento 9: Desempeño por Área en 3 pruebas)
+       ========================================================================== -->
+  <div id="student-modal-backdrop" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 id="modal-student-name" style="font-size:1.25rem; font-weight:700; color:var(--text-main);">Ficha de Estudiante</h3>
+          <div id="modal-student-meta" style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">Detalles</div>
+        </div>
+        <button id="btn-close-student-modal" class="btn-close-modal">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Gráfico 1: Evolución de Puntaje Global -->
+        <div style="margin-bottom:1.5rem;">
+          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Evolución de Puntaje Global (Alfa → Beta → Gamma)</h4>
+          <div class="chart-container" style="min-height:220px; max-height:240px;">
+            <canvas id="chart-student-modal-history"></canvas>
+          </div>
+        </div>
+
+        <!-- Gráfico 2: Desempeño por Área en las Tres Pruebas (Requerimiento 9) -->
+        <div style="margin-bottom:1.5rem;">
+          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Desempeño por Área en las Tres Pruebas (Comparativa Alfa, Beta, Gamma)</h4>
+          <div class="chart-container" style="min-height:260px; max-height:280px;">
+            <canvas id="chart-student-modal-areas-comparison"></canvas>
+          </div>
+        </div>
+
+        <!-- Tabla Histórica de Pruebas -->
+        <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Historial Detallado por Aplicación</h4>
+        <div class="table-responsive">
+          <table class="executive-table">
+            <thead>
+              <tr>
+                <th>Prueba</th>
+                <th>Grado</th>
+                <th>Puesto</th>
+                <th>Puntaje</th>
+                <th>Desempeño</th>
+                <th>Lenguaje</th>
+                <th>Matemáticas</th>
+                <th>C. Naturales</th>
+                <th>Sociales</th>
+                <th>Inglés</th>
+              </tr>
+            </thead>
+            <tbody id="modal-student-history-body">
+              <!-- Renderizado dinámicamente -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       Scripts de la Aplicación en el orden arquitectónico establecido
+       ========================================================================== -->
+  <script src="js/auth.js"></script>
+  <script src="js/filters.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/exports.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
