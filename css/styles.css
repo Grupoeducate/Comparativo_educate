@@ -1458,3 +1458,56 @@ body {
   }
 }
 
+
+/* ==========================================================================
+   Bloques de Gráficas Separadas por Escala (Periódicas / Saber)
+   ========================================================================== */
+
+.split-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  width: 100%;
+}
+
+.chart-block {
+  padding-top: 0.25rem;
+}
+
+.chart-block.with-divider {
+  border-top: 1px dashed var(--border-color);
+  padding-top: 1.25rem;
+}
+
+.chart-block-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.6rem;
+}
+
+.chart-block-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.chart-block-scale {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Etiqueta de escala dentro de la leyenda oficial de desempeños */
+.legend-group {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+/* Insignia neutral para el caso de escalas mixtas (Periódicas + Saber) */
+.badge-mixta {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.badge-mixta .badge-dot { background-color: #64748b; }
