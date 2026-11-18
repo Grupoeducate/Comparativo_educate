@@ -52,8 +52,8 @@ window.EDUCATE360_CONFIG = {
       {
         "dane": "111001086754",
         "clave": "4587",
-        "nombre": "Colegio Cambridge",
-        "ciudad": "Bogotá"
+        "nombre": "COLEGIO LA CONCEPCION IED",
+        "ciudad": "SOACHA"
       }
     ]
   }
@@ -88,6 +88,10 @@ window.EDUCATE360_CONFIG = {
     "periodica": {
       "puntaje_minimo": 1,
       "puntaje_maximo": 5,
+      "areas": {
+        "puntaje_minimo": 1,
+        "puntaje_maximo": 5
+      },
       "niveles": [
         {
           "orden": 1,
@@ -118,6 +122,22 @@ window.EDUCATE360_CONFIG = {
     "saber": {
       "puntaje_minimo": 0,
       "puntaje_maximo": 500,
+      "areas": {
+        "puntaje_minimo": 0,
+        "puntaje_maximo": 100
+      },
+      "ponderacion": {
+        "descripcion": "Resolución 268 de 2020 (ICFES): Índice Global = (3*LC + 3*MA + 3*CN + 3*SC + IN)/13; Puntaje Global = IG*5. Cada prueba se califica de 0 a 100.",
+        "divisor": 13,
+        "factor": 5,
+        "pesos": {
+          "LECTURA CRÍTICA": 3,
+          "MATEMÁTICAS": 3,
+          "CIENCIAS NATURALES": 3,
+          "SOCIALES Y CIUDADANAS": 3,
+          "INGLÉS": 1
+        }
+      },
       "niveles": [
         {
           "orden": 1,

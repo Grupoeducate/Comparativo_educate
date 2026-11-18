@@ -141,6 +141,10 @@ const Filters = (function() {
 
   /**
    * Escala oficial del tipo de prueba según config/escalas.json.
+   * Expone DOS escalas:
+   * - minimo/maximo: escala del PUNTAJE GLOBAL (Saber 0 a 500, periódica 1 a 5).
+   * - areas: escala de cada ÁREA académica (Saber 0 a 100, periódica 1 a 5).
+   *   Cuando config no define el bloque "areas", se usa la escala global como respaldo.
    */
   function getEscala(tipo) {
     const clave = tipo === 'saber' ? 'saber' : 'periodica';
@@ -151,13 +155,113 @@ const Filters = (function() {
     const niveles = Array.isArray(escala.niveles) ? escala.niveles.slice() : [];
     niveles.sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
 
+    const minimo = isNaN(Number(escala.puntaje_minimo)) ? defectos.minimo : Number(escala.puntaje_minimo);
+    const maximo = isNaN(Number(escala.puntaje_maximo)) ? defectos.maximo : Number(escala.puntaje_maximo);
+    const areasCfg = escala.areas || {};
+
     return {
       tipo: clave,
       etiqueta: clave === 'saber' ? 'Saber' : 'Periódica',
-      minimo: isNaN(Number(escala.puntaje_minimo)) ? defectos.minimo : Number(escala.puntaje_minimo),
-      maximo: isNaN(Number(escala.puntaje_maximo)) ? defectos.maximo : Number(escala.puntaje_maximo),
+      minimo,
+      maximo,
+      areas: {
+        minimo: isNaN(Number(areasCfg.puntaje_minimo)) ? minimo : Number(areasCfg.puntaje_minimo),
+        maximo: isNaN(Number(areasCfg.puntaje_maximo)) ? maximo : Number(areasCfg.puntaje_maximo)
+      },
       niveles
     };
+  }
+
+  /**
+   * Escala de cada ÁREA académica del tipo de prueba (Saber 0 a 100, periódica 1 a 5).
+   * Los promedios y gráficas por área deben usar esta escala, no la global.
+   */
+  function getEscalaArea(tipo) {
+    const escala = getEscala(tipo);
+    return { tipo: escala.tipo, minimo: escala.areas.minimo, maximo: escala.areas.maximo };
+  }
+
+  /**
+   * Máximo de la escala de áreas (conveniencia para textos "x / 100" o "x / 5").
+   */
+  function getAreaMax(tipo) {
+    return getEscalaArea(tipo).maximo;
+  }
+
+  /**
+   * Ponderación oficial del Puntaje Global ICFES (Resolución 268 de 2020) para Saber:
+   * IG = (3·LC + 3·MA + 3·CN + 3·SC + 1·IN)/13 y PG = IG × 5.
+   * Los pesos están declarados sobre las columnas de área (escala 0 a 100).
+   * Las pruebas periódicas no tienen ponderación: devuelve undefined.
+   */
+  function getPonderacion(tipo) {
+    if (tipo !== 'saber') return undefined;
+    const pond = (configEscalas.saber && configEscalas.saber.ponderacion) || {};
+    if (!pond.pesos || !Number(pond.divisor) || !Number(pond.factor)) return undefined;
+    return {
+      descripcion: pond.descripcion || '',
+      divisor: Number(pond.divisor),
+      factor: Number(pond.factor),
+      pesos: { ...pond.pesos }
+    };
+  }
+
+  // Clave interna de área por columna de ponderación, para leer el puntaje
+  // con getAreaScore (incluye el respaldo entre LENGUAJE y LECTURA CRÍTICA).
+  const AREA_KEY_POR_COLUMNA = {
+    'LECTURA CRÍTICA': 'Lenguaje',
+    'MATEMÁTICAS': 'Matematicas',
+    'CIENCIAS NATURALES': 'Ciencias Naturales',
+    'SOCIALES Y CIUDADANAS': 'Sociales',
+    'INGLÉS': 'Ingles'
+  };
+
+  /**
+   * Puntaje Global oficial de un registro.
+   * - Saber: IG = (3·LC + 3·MA + 3·CN + 3·SC + 1·IN)/13; PG = IG × 5, aplicando
+   *   los pesos sobre las áreas (0 a 100). Si el evaluado no presentó INGLÉS,
+   *   el IG es el promedio aritmético de las cuatro pruebas restantes y aún se
+   *   aplica el factor. Si falta cualquiera de las otras cuatro áreas, devuelve null.
+   * - Periódica: el PUNTAJE de la fila parseado como número (o null).
+   */
+  function calcularPuntajeGlobal(record) {
+    if (!record) return null;
+    const tipo = getTipoPrueba(record.PRUEBA);
+
+    if (tipo !== 'saber') {
+      const puntaje = parsePuntajeCelda(record.PUNTAJE);
+      return isNaN(puntaje) ? null : puntaje;
+    }
+
+    const pond = getPonderacion('saber');
+    if (!pond) return null;
+
+    // Puntaje numérico de cada área con peso configurado
+    const valores = {};
+    Object.keys(pond.pesos).forEach(columna => {
+      const claveArea = AREA_KEY_POR_COLUMNA[columna] || columna;
+      const valor = getAreaScore(record, claveArea, 'saber');
+      if (!isNaN(valor)) valores[columna] = valor;
+    });
+
+    const columnasPrincipales = Object.keys(pond.pesos).filter(c => c !== 'INGLÉS');
+
+    // Las cuatro pruebas principales son obligatorias
+    if (columnasPrincipales.some(c => valores[c] === undefined)) return null;
+
+    let indiceGlobal;
+    if (valores['INGLÉS'] === undefined) {
+      // Caso oficial "sin Inglés": promedio aritmético de las cuatro pruebas restantes
+      const suma = columnasPrincipales.reduce((acc, c) => acc + valores[c], 0);
+      indiceGlobal = suma / columnasPrincipales.length;
+    } else {
+      const sumaPonderada = Object.keys(pond.pesos)
+        .reduce((acc, c) => acc + valores[c] * Number(pond.pesos[c]), 0);
+      indiceGlobal = sumaPonderada / pond.divisor;
+    }
+
+    const puntajeGlobal = indiceGlobal * pond.factor;
+    return Math.round(puntajeGlobal * 10) / 10;
   }
 
   /**
@@ -692,6 +796,10 @@ const Filters = (function() {
     getAreaLabel,
     getAreaScore,
     getEscala,
+    getEscalaArea,
+    getAreaMax,
+    getPonderacion,
+    calcularPuntajeGlobal,
     getNiveles,
     getNivelLabels,
     getNivelColors,
