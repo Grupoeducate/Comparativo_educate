@@ -39,6 +39,34 @@ const Charts = (function() {
   };
 
   /**
+   * Rango del eje de puntajes a partir de las series realmente dibujadas.
+   * Mantiene el rango institucional habitual (0-5) y solo lo amplía cuando el
+   * consolidado usa otra escala (por ejemplo puntajes 0-100), evitando gráficas recortadas.
+   */
+  function scoreAxisBounds(seriesList, fixedMin, fixedMax) {
+    const values = [];
+    (seriesList || []).forEach(series => {
+      (series || []).forEach(value => {
+        const num = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
+        if (!isNaN(num) && num > 0) values.push(num);
+      });
+    });
+
+    if (values.length === 0) return { min: fixedMin, max: fixedMax, stepSize: 0.5 };
+
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    if (dataMin >= fixedMin && dataMax <= fixedMax) {
+      return { min: fixedMin, max: fixedMax, stepSize: 0.5 };
+    }
+
+    const min = Math.max(0, Math.floor(dataMin));
+    let max = Math.ceil(dataMax);
+    if (max - min < 1) max = min + 1;
+    return { min, max, stepSize: Math.max(0.5, Math.round((max - min) / 8)) };
+  }
+
+  /**
    * Destruye una instancia previa si existe para evitar superposiciones
    */
   function destroyChart(canvasId) {
@@ -225,7 +253,9 @@ const Charts = (function() {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const pruebas = evolutionData.pruebas || ['ALFA', 'BETA', 'GAMMA'];
+    // Solo se grafican las pruebas presentes en el consolidado de la institución
+    const pruebas = evolutionData.pruebas || [];
+    if (pruebas.length === 0) return;
     const datasets = [
       {
         label: 'Promedio General',
@@ -258,6 +288,12 @@ const Charts = (function() {
       renderSvgLineChart(canvas, pruebas, datasets);
       return;
     }
+
+    const generalAxis = scoreAxisBounds(
+      datasets.map(ds => ds.data),
+      2.0,
+      5.0
+    );
 
     const ctx = canvas.getContext('2d');
     chartInstances[canvasId] = new Chart(ctx, {
@@ -300,10 +336,10 @@ const Charts = (function() {
         },
         scales: {
           y: {
-            min: 2.0,
-            max: 5.0,
+            min: generalAxis.min,
+            max: generalAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: generalAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { color: '#f1f5f9' },
@@ -868,6 +904,8 @@ const Charts = (function() {
       return;
     }
 
+    const historyAxis = scoreAxisBounds([globalScores], 1.0, 5.2);
+
     const ctx = canvas.getContext('2d');
     chartInstances[canvasId] = new Chart(ctx, {
       type: 'line',
@@ -892,16 +930,16 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` Puntaje Global: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` Puntaje Global: ${ctx.raw.toFixed(2)}`
             }
           }
         },
         scales: {
           y: {
-            min: 1.0,
-            max: 5.2,
+            min: historyAxis.min,
+            max: historyAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: historyAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { color: '#f1f5f9' },
@@ -926,10 +964,12 @@ const Charts = (function() {
       'BETA': '#4f46e5',
       'GAMMA': '#059669'
     };
+    // Paleta para pruebas que no están en config/pruebas.json (por ejemplo EPSILON)
+    const extraColors = ['#0d9488', '#b45309', '#7c3aed', '#be123c', '#0891b2'];
 
-    const datasets = studentTests.map(t => {
+    const datasets = studentTests.map((t, testIndex) => {
       const p = String(t.PRUEBA || t.prueba).toUpperCase();
-      const color = testColors[p] || '#64748b';
+      const color = testColors[p] || extraColors[testIndex % extraColors.length];
       const data = listAreas.map(a => {
         const col = AREA_COLUMNS[a] || a.toUpperCase();
         const val = parseFloat(String(t[col] || t[a] || '').replace(',', '.'));
