@@ -5,9 +5,11 @@
  */
 
 const Filters = (function() {
-  // Estado de los filtros activos (por defecto 'periodica' al no haber pruebas Saber)
+  // Estado de los filtros activos. El tipo de prueba por defecto NUNCA se asume:
+  // init() y resetFilters() lo derivan del consolidado cargado (el único tipo
+  // presente, o 'todos' cuando conviven periódicas y Saber).
   let state = {
-    tipoPrueba: 'periodica',
+    tipoPrueba: 'todos',
     prueba: 'todos',
     ciclo: 'todos',
     grado: 'todos',
@@ -400,6 +402,111 @@ const Filters = (function() {
   }
 
   /**
+   * Tipos de prueba realmente presentes en el consolidado, en orden estable.
+   * No se asume ningún conjunto: una institución puede publicar solo periódicas,
+   * solo Saber o ambas escalas.
+   */
+  function getTiposEnDatos() {
+    const encontrados = [];
+    dataset.forEach(r => {
+      const tipo = getTipoPrueba(r.PRUEBA);
+      if (!encontrados.includes(tipo)) encontrados.push(tipo);
+    });
+    return ['periodica', 'saber'].filter(t => encontrados.includes(t));
+  }
+
+  /**
+   * Tipo de prueba por defecto según los datos: el único tipo presente cuando
+   * el consolidado solo tiene uno, o 'todos' cuando conviven ambos tipos.
+   */
+  function getTipoPruebaPorDefecto() {
+    const tipos = getTiposEnDatos();
+    return tipos.length === 1 ? tipos[0] : 'todos';
+  }
+
+  /**
+   * Orden natural de grados: numéricos primero y de menor a mayor;
+   * los no numéricos (por ejemplo Transición) van después, alfabéticos.
+   */
+  function compararGrados(a, b) {
+    const na = parseInt(a, 10);
+    const nb = parseInt(b, 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    if (!isNaN(na)) return -1;
+    if (!isNaN(nb)) return 1;
+    return String(a).localeCompare(String(b));
+  }
+
+  /**
+   * Valor actual de un select, con respaldo al estado cuando el elemento no existe.
+   */
+  function leerSelect(id, respaldo) {
+    const el = document.getElementById(id);
+    return el ? el.value : respaldo;
+  }
+
+  /**
+   * Registros base para construir las opciones de un filtro: aplica todos los
+   * filtros activos excepto el indicado. Así ningún select ofrece un grado,
+   * grupo o prueba sin registros en el consolidado filtrado.
+   */
+  function registrosParaOpciones(excluir) {
+    let rows = dataset;
+    if (excluir !== 'tipoPrueba') {
+      const tipoSeleccionado = leerSelect('filter-tipo-prueba', state.tipoPrueba);
+      if (tipoSeleccionado !== 'todos') {
+        rows = rows.filter(r => getTipoPrueba(r.PRUEBA) === tipoSeleccionado);
+      }
+    }
+    if (excluir !== 'prueba') {
+      const pruebaSeleccionada = leerSelect('filter-prueba', state.prueba);
+      if (pruebaSeleccionada !== 'todos') {
+        rows = rows.filter(r => String(r.PRUEBA).trim().toUpperCase() === pruebaSeleccionada.trim().toUpperCase());
+      }
+    }
+    if (excluir !== 'ciclo') {
+      const cicloSeleccionado = leerSelect('filter-ciclo', state.ciclo);
+      if (cicloSeleccionado !== 'todos') {
+        rows = rows.filter(r => getCicloForGrade(r.GRADO) === cicloSeleccionado);
+      }
+    }
+    if (excluir !== 'grado') {
+      const gradoSeleccionado = leerSelect('filter-grado', state.grado);
+      if (gradoSeleccionado !== 'todos') {
+        rows = rows.filter(r => String(r.GRADO).trim() === gradoSeleccionado);
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * Crea un <option> para los selects de filtro.
+   */
+  function crearOpcion(valor, texto) {
+    const opt = document.createElement('option');
+    opt.value = valor;
+    opt.textContent = texto;
+    return opt;
+  }
+
+  /**
+   * Valores disponibles en un select ya poblado.
+   */
+  function valoresDeSelect(sel) {
+    return Array.prototype.map.call(sel.options, o => o.value);
+  }
+
+  /**
+   * Restaura el valor de un select tras repoblarlo: conserva el valor vigente
+   * si aún existe como opción; de lo contrario vuelve a 'todos' para que el
+   * filtro nunca quede apuntando a un valor sin registros.
+   */
+  function restaurarSeleccion(sel, currentVal, respaldo) {
+    const valores = valoresDeSelect(sel);
+    sel.value = (currentVal !== '' && valores.includes(currentVal)) ? currentVal : respaldo;
+  }
+
+  /**
    * Obtiene los grupos disponibles para un grado específico (Observación 3)
    */
   function getGroupsForGrade(grado) {
@@ -438,10 +545,23 @@ const Filters = (function() {
     const btnReset = document.getElementById('btn-reset-filters');
     const inpGlobalSearch = document.getElementById('input-global-search');
 
-    // Al cambiar tipo de prueba, actualiza las pruebas mostradas en el select
+    // Cascada de filtros de izquierda a derecha (Observación de encadenamiento):
+    // tipo de prueba -> prueba -> ciclo -> grado -> grupo.
+    // Cada cambio repuebla únicamente los filtros que están a su derecha.
     if (selTipo) {
       selTipo.addEventListener('change', () => {
         populatePruebasDropdown();
+        populateCiclosDropdown();
+        populateGradosDropdown();
+        populateGruposDropdown();
+      });
+    }
+
+    if (selPrueba) {
+      selPrueba.addEventListener('change', () => {
+        populateCiclosDropdown();
+        populateGradosDropdown();
+        populateGruposDropdown();
       });
     }
 
@@ -510,10 +630,39 @@ const Filters = (function() {
    * Llena los dropdowns con opciones dinámicas
    */
   function populateDropdowns() {
+    populateTiposDropdown();
     populatePruebasDropdown();
     populateCiclosDropdown();
     populateGradosDropdown();
     populateGruposDropdown();
+  }
+
+  /**
+   * Tipos de prueba derivados del consolidado: solo se listan los tipos con
+   * registros. La opción "Todos los Tipos" aparece únicamente cuando conviven
+   * periódicas y Saber; con un solo tipo el select muestra únicamente ese tipo.
+   */
+  function populateTiposDropdown(usarValorPorDefecto) {
+    const sel = document.getElementById('filter-tipo-prueba');
+    if (!sel) return;
+
+    const currentVal = sel.value;
+    const tipos = getTiposEnDatos();
+
+    sel.innerHTML = '';
+    if (tipos.length > 1) {
+      sel.appendChild(crearOpcion('todos', 'Todos los Tipos'));
+    }
+    tipos.forEach(tipo => {
+      sel.appendChild(crearOpcion(tipo, getEscala(tipo).etiqueta));
+    });
+
+    // Conservar la selección vigente si sigue disponible; de lo contrario se usa
+    // el tipo por defecto del consolidado (nunca un tipo supuesto).
+    if (usarValorPorDefecto || currentVal === '' || !valoresDeSelect(sel).includes(currentVal)) {
+      sel.value = getTipoPruebaPorDefecto();
+    }
+    state.tipoPrueba = sel.value;
   }
 
   function populatePruebasDropdown() {
@@ -535,112 +684,104 @@ const Filters = (function() {
       }
 
       if (include) {
-        const opt = document.createElement('option');
-        opt.value = p;
         const cfgMatch = configPruebas.find(cp => normalizarNombre(cp.id || '') === normalizarNombre(p));
-        opt.textContent = cfgMatch ? cfgMatch.nombre : `Misión ${p}`;
-        sel.appendChild(opt);
+        sel.appendChild(crearOpcion(p, cfgMatch ? cfgMatch.nombre : `Misión ${p}`));
       }
     });
 
-    if (rawPruebas.includes(currentVal)) {
-      sel.value = currentVal;
-    } else {
-      sel.value = 'todos';
-    }
+    restaurarSeleccion(sel, currentVal, 'todos');
   }
 
+  /**
+   * Ciclos derivados de los grados presentes en el consolidado: se listan solo
+   * los ciclos con al menos un grado con registros y cada etiqueta nombra únicamente
+   * los grados que realmente aparecen en los datos. Los grados sin ciclo definido
+   * se omiten en lugar de inventarles uno.
+   */
   function populateCiclosDropdown() {
     const sel = document.getElementById('filter-ciclo');
     if (!sel) return;
 
-    sel.innerHTML = `
-      <option value="todos">Todos los Ciclos</option>
-      <option value="1">Ciclo 1 (1°, 2°, 3°)</option>
-      <option value="2">Ciclo 2 (4°, 5°)</option>
-      <option value="3">Ciclo 3 (6°, 7°)</option>
-      <option value="4">Ciclo 4 (8°, 9°)</option>
-      <option value="5">Ciclo 5 (10°, 11°)</option>
-    `;
-    sel.value = state.ciclo;
+    const currentVal = sel.value;
+    // En la cascada (izquierda a derecha), el ciclo se limita por tipo y prueba,
+    // no por los filtros que están a su derecha (grado y grupo)
+    const rows = registrosParaOpciones('ciclo');
+
+    const gradosPorCiclo = {};
+    [...new Set(rows.map(r => String(r.GRADO).trim()).filter(Boolean))]
+      .sort(compararGrados)
+      .forEach(grado => {
+        const ciclo = getCicloForGrade(grado);
+        if (ciclo === null) return;
+        if (!gradosPorCiclo[ciclo]) gradosPorCiclo[ciclo] = [];
+        gradosPorCiclo[ciclo].push(grado);
+      });
+
+    sel.innerHTML = '';
+    sel.appendChild(crearOpcion('todos', 'Todos los Ciclos'));
+    Object.keys(gradosPorCiclo)
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+      .forEach(cicloNum => {
+        const grados = gradosPorCiclo[cicloNum].map(g => `${g}°`).join(', ');
+        sel.appendChild(crearOpcion(cicloNum, `Ciclo ${cicloNum} (${grados})`));
+      });
+
+    restaurarSeleccion(sel, currentVal, 'todos');
   }
 
+  /**
+   * Grados derivados del consolidado según los filtros activos (tipo, prueba y
+   * ciclo): no se ofrecen grados sin registros.
+   */
   function populateGradosDropdown() {
-    const selCiclo = document.getElementById('filter-ciclo');
     const sel = document.getElementById('filter-grado');
     if (!sel) return;
 
     const currentVal = sel.value;
-    const selectedCiclo = selCiclo ? selCiclo.value : state.ciclo;
+    const rows = registrosParaOpciones('grado');
 
-    sel.innerHTML = '<option value="todos">Todos los Grados</option>';
+    sel.innerHTML = '';
+    sel.appendChild(crearOpcion('todos', 'Todos los Grados'));
 
-    let uniqueGrados = [...new Set(dataset.map(r => String(r.GRADO).trim()).filter(Boolean))]
-      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    [...new Set(rows.map(r => String(r.GRADO).trim()).filter(Boolean))]
+      .sort(compararGrados)
+      .forEach(g => {
+        sel.appendChild(crearOpcion(g, `Grado ${g}°`));
+      });
 
-    if (selectedCiclo !== 'todos') {
-      const ciclos = configInstitucion.ciclos || {};
-      const gradosValidos = ciclos[selectedCiclo] || [];
-      uniqueGrados = uniqueGrados.filter(g => gradosValidos.includes(g));
-    }
-
-    uniqueGrados.forEach(g => {
-      const opt = document.createElement('option');
-      opt.value = g;
-      opt.textContent = `Grado ${g}°`;
-      sel.appendChild(opt);
-    });
-
-    if (uniqueGrados.includes(currentVal)) {
-      sel.value = currentVal;
-    } else {
-      sel.value = 'todos';
-    }
+    restaurarSeleccion(sel, currentVal, 'todos');
   }
 
+  /**
+   * Grupos derivados del consolidado según los filtros activos (tipo, prueba,
+   * ciclo y grado): no se ofrecen grupos sin registros.
+   */
   function populateGruposDropdown() {
-    const selCiclo = document.getElementById('filter-ciclo');
-    const selGrado = document.getElementById('filter-grado');
     const sel = document.getElementById('filter-grupo');
     if (!sel) return;
 
     const currentVal = sel.value;
-    const selectedGrado = selGrado ? selGrado.value : state.grado;
-    const selectedCiclo = selCiclo ? selCiclo.value : state.ciclo;
+    const rows = registrosParaOpciones('grupo');
 
-    sel.innerHTML = '<option value="todos">Todos los Grupos</option>';
+    sel.innerHTML = '';
+    sel.appendChild(crearOpcion('todos', 'Todos los Grupos'));
 
-    let matchingRows = dataset;
-    if (selectedGrado !== 'todos') {
-      matchingRows = matchingRows.filter(r => String(r.GRADO).trim() === selectedGrado);
-    } else if (selectedCiclo !== 'todos') {
-      const ciclos = configInstitucion.ciclos || {};
-      const gradosValidos = ciclos[selectedCiclo] || [];
-      matchingRows = matchingRows.filter(r => gradosValidos.includes(String(r.GRADO).trim()));
-    }
-
-    const uniqueGrupos = [...new Set(matchingRows.map(r => String(r.GRUPO).trim()).filter(Boolean))].sort();
-
+    const uniqueGrupos = [...new Set(rows.map(r => String(r.GRUPO).trim()).filter(Boolean))]
+      .sort(compararGrados);
     uniqueGrupos.forEach(grp => {
-      const opt = document.createElement('option');
-      opt.value = grp;
-      opt.textContent = `Grupo ${grp}`;
-      sel.appendChild(opt);
+      sel.appendChild(crearOpcion(grp, `Grupo ${grp}`));
     });
 
-    if (uniqueGrupos.includes(currentVal)) {
-      sel.value = currentVal;
-    } else {
-      sel.value = 'todos';
-    }
+    restaurarSeleccion(sel, currentVal, 'todos');
   }
 
   /**
    * Resetea todos los filtros a sus valores predeterminados y consulta
    */
   function resetFilters() {
+    // Nunca se asume 'periodica': el tipo por defecto se deriva del consolidado
     state = {
-      tipoPrueba: 'periodica',
+      tipoPrueba: getTipoPruebaPorDefecto(),
       prueba: 'todos',
       ciclo: 'todos',
       grado: 'todos',
@@ -649,25 +790,24 @@ const Filters = (function() {
       search: ''
     };
 
-    const selTipo = document.getElementById('filter-tipo-prueba');
-    const selPrueba = document.getElementById('filter-prueba');
-    const selCiclo = document.getElementById('filter-ciclo');
-    const selGrado = document.getElementById('filter-grado');
-    const selGrupo = document.getElementById('filter-grupo');
-    const selArea = document.getElementById('filter-area');
-    const inpSearch = document.getElementById('input-global-search');
+    // Vaciar las selecciones para que cada select recupere su valor por defecto
+    ['filter-prueba', 'filter-ciclo', 'filter-grado', 'filter-grupo'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
 
-    if (selTipo) selTipo.value = 'periodica';
-    if (selPrueba) selPrueba.value = 'todos';
-    if (selCiclo) selCiclo.value = 'todos';
-    if (selGrado) selGrado.value = 'todos';
-    if (selGrupo) selGrupo.value = 'todos';
-    if (selArea) selArea.value = 'todos';
-    if (inpSearch) inpSearch.value = '';
-
+    populateTiposDropdown(true);
     populatePruebasDropdown();
+    populateCiclosDropdown();
     populateGradosDropdown();
     populateGruposDropdown();
+
+    const selArea = document.getElementById('filter-area');
+    const inpSearch = document.getElementById('input-global-search');
+    if (selArea) selArea.value = 'todos';
+    if (inpSearch) inpSearch.value = '';
+    state.area = 'todos';
+    state.search = '';
 
     triggerChange();
   }
@@ -770,9 +910,21 @@ const Filters = (function() {
       };
       const elementId = idMap[key] || `filter-${key}`;
       const el = document.getElementById(elementId);
-      if (el) el.value = value;
+      if (el) {
+        el.value = value;
+        // Un valor sin opción disponible vuelve a 'todos' en lugar de filtrar todo
+        if (el.value !== String(value)) {
+          el.value = 'todos';
+          state[key] = 'todos';
+        }
+      }
       if (key === 'tipoPrueba') {
         populatePruebasDropdown();
+        populateGradosDropdown();
+        populateGruposDropdown();
+      } else if (key === 'prueba') {
+        populateGradosDropdown();
+        populateGruposDropdown();
       } else if (key === 'ciclo') {
         populateGradosDropdown();
         populateGruposDropdown();
@@ -806,7 +958,9 @@ const Filters = (function() {
     getNivelPorPuntaje,
     getDesempenoInfo,
     getCicloForGrade,
-    getGroupsForGrade
+    getGroupsForGrade,
+    getTiposEnDatos,
+    compararGrados
   };
 })();
 

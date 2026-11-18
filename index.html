@@ -186,35 +186,22 @@
         </div>
 
         <div class="filters-grid">
-          <!-- 1. Tipo de Prueba (Por defecto 'periodica' al no haber Saber) -->
+          <!-- 1. Tipo de Prueba (las opciones se derivan del consolidado en js/filters.js) -->
           <div class="filter-control">
             <label for="filter-tipo-prueba">Tipo de Prueba</label>
-            <select id="filter-tipo-prueba" class="filter-select">
-              <option value="todos">Todos los Tipos</option>
-              <option value="periodica" selected>Periódica (Alfa, Beta, Gamma)</option>
-              <option value="saber">Pruebas Saber</option>
-            </select>
+            <select id="filter-tipo-prueba" class="filter-select"></select>
           </div>
 
           <!-- 2. Prueba Específica -->
           <div class="filter-control">
             <label for="filter-prueba">Prueba</label>
-            <select id="filter-prueba" class="filter-select">
-              <option value="todos">Todas las Pruebas</option>
-            </select>
+            <select id="filter-prueba" class="filter-select"></select>
           </div>
 
-          <!-- 3. Ciclo -->
+          <!-- 3. Ciclo (las opciones se derivan del consolidado en js/filters.js) -->
           <div class="filter-control">
             <label for="filter-ciclo">Ciclo Educativo</label>
-            <select id="filter-ciclo" class="filter-select">
-              <option value="todos">Todos los Ciclos</option>
-              <option value="1">Ciclo 1 (1°, 2°, 3°)</option>
-              <option value="2">Ciclo 2 (4°, 5°)</option>
-              <option value="3">Ciclo 3 (6°, 7°)</option>
-              <option value="4">Ciclo 4 (8°, 9°)</option>
-              <option value="5">Ciclo 5 (10°, 11°)</option>
-            </select>
+            <select id="filter-ciclo" class="filter-select"></select>
           </div>
 
           <!-- 4. Grado -->
@@ -356,7 +343,7 @@
             <div class="executive-card col-8">
               <div class="card-header">
                 <div class="card-title">Promedio Comparativo por Área Académica</div>
-                <div class="card-subtitle">Promedios según la escala de cada ÁREA (Periódica 1.0–5.0 · Saber 0–100) con valores numéricos directos</div>
+                <div class="card-subtitle">Promedios según la escala de cada ÁREA, con valores numéricos directos</div>
               </div>
               <div class="card-body">
                 <div class="split-charts" id="split-chart-dashboard-areas">
@@ -390,7 +377,7 @@
                         <th>Grado</th>
                         <th>Estudiantes Evaluados</th>
                         <th>Promedio Global</th>
-                        <th style="min-width:320px;">Desempeños según escala (Periódica: Bajo/Básico/Alto/Superior · Saber: Insuficiente/Mínimo/Satisfactorio/Avanzado) y Distribución Apilada</th>
+                        <th style="min-width:320px;">Desempeños según la escala de cada tipo de prueba y Distribución Apilada</th>
                       </tr>
                     </thead>
                     <tbody id="dashboard-grades-table-body">
@@ -410,7 +397,7 @@
           <div class="section-header">
             <div class="section-title-group">
               <h2>Evolución Institucional</h2>
-              <p>Trayectoria y crecimiento comparativo entre las pruebas del consolidado (Periódicas 1.0–5.0 · Saber 0–500)</p>
+              <p>Trayectoria y crecimiento comparativo entre las pruebas del consolidado, según la escala de cada tipo de prueba</p>
             </div>
           </div>
 
@@ -561,7 +548,7 @@
           <div class="section-header">
             <div class="section-title-group">
               <h2>Distribución de Desempeños</h2>
-              <p>Visualización de concentración en los niveles oficiales según la escala (Periódica: Bajo, Básico, Alto y Superior · Saber: Insuficiente, Mínimo, Satisfactorio y Avanzado)</p>
+              <p>Visualización de concentración en los niveles oficiales según la escala de cada tipo de prueba</p>
             </div>
           </div>
 
@@ -631,7 +618,7 @@
             <div class="executive-card col-7">
               <div class="card-header">
                 <div class="card-title">Comparativa de Rendimiento Inter-ciclos</div>
-                <div class="card-subtitle">Promedio ponderado por ciclo educativo, separado por escala (Periódica 1.0–5.0 · Saber 0–500)</div>
+                <div class="card-subtitle">Promedio ponderado por ciclo educativo, separado por escala</div>
               </div>
               <div class="card-body">
                 <!-- Gráfica separada por escala: periódicas (1 a 5) y Saber (0 a 500) -->
@@ -788,7 +775,7 @@
       <div class="modal-body">
         <!-- Gráfico 1: Evolución de Puntaje Global (una gráfica por escala presente) -->
         <div style="margin-bottom:1.5rem;">
-          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Evolución de Puntaje Global por Tipo de Prueba (Periódicas 1.0–5.0 · Saber 0–500)</h4>
+          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Evolución de Puntaje Global por Tipo de Prueba (según la escala de cada tipo)</h4>
           <div class="split-charts" id="split-chart-student-history">
             <!-- Bloques por escala renderizados dinámicamente -->
           </div>

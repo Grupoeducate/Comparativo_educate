@@ -117,27 +117,15 @@ const App = (function() {
       nombre: 'Colegio Cambridge',
       dane: '425377076576',
       ciudad: 'Bogotá',
-      anio_lectivo: 2026,
-      ciclos: {
-        "0": ["0", "Transición"],
-        "1": ["1", "2", "3"],
-        "2": ["4", "5"],
-        "3": ["6", "7"],
-        "4": ["8", "9"],
-        "5": ["10", "11"]
-      }
+      anio_lectivo: 2026
     });
 
     // Sin usuarios registrados no hay acceso posible: no se usa ningún usuario por defecto
     const usuarios = await pick('config/usuarios.json', cfg.usuarios, { usuarios: [] });
 
-    const pruebas = await pick('config/pruebas.json', cfg.pruebas, {
-      pruebas: [
-        { id: 'ALFA', nombre: 'Misión Alfa', tipo: 'periodica', orden: 1 },
-        { id: 'BETA', nombre: 'Misión Beta', tipo: 'periodica', orden: 2 },
-        { id: 'GAMMA', nombre: 'Misión Gamma', tipo: 'periodica', orden: 3 }
-      ]
-    });
+    // Sin catálogo de pruebas configurado no se inventan nombres: las etiquetas
+    // se resuelven con el código presente en el consolidado.
+    const pruebas = await pick('config/pruebas.json', cfg.pruebas, { pruebas: [] });
 
     const escalas = await pick('config/escalas.json', cfg.escalas, {});
     const desempenos = await pick('config/desempenos.json', cfg.desempenos, {});
@@ -532,7 +520,7 @@ const App = (function() {
     const currentGrupo = filterState.grupo;
     const availableGroups = window.Filters.getGroupsForGrade(currentGrado);
 
-    const gradoLabel = currentGrado !== 'todos' ? `Grado ${currentGrado}°` : 'Todos los Grados (1° a 10°)';
+    const gradoLabel = currentGrado !== 'todos' ? `Grado ${currentGrado}°` : 'Todos los Grados';
     
     let groupsHtml = '';
     if (availableGroups.length > 0) {
@@ -738,13 +726,16 @@ const App = (function() {
     const tipos = getTiposPresentes(records);
 
     // Los promedios generales solo son comparables dentro de una misma escala
-    if (tipos.length > 1) {
+    if (tipos.length !== 1) {
+      // Con escalas mixtas (o sin registros tras los filtros) el promedio general no es comparable
       setText('kpi-promedio-general', '-');
       setText('kpi-mejor-area-nombre', '-');
       setText('kpi-mejor-area-score', '-');
       setText('kpi-area-critica-nombre', '-');
       setText('kpi-area-critica-score', '-');
-      setText('kpi-promedio-hint', 'Escalas mixtas: el promedio general no es comparable');
+      setText('kpi-promedio-hint', tipos.length > 1
+        ? 'Escalas mixtas: el promedio general no es comparable'
+        : 'Sin registros para los filtros aplicados');
 
       const badgeEl = document.getElementById('kpi-promedio-badge');
       if (badgeEl) {
@@ -752,7 +743,7 @@ const App = (function() {
         badgeEl.className = 'badge-desempeno badge-mixta';
       }
     } else {
-      const tipo = tipos[0] || 'periodica';
+      const tipo = tipos[0];
       const escala = window.Filters.getEscala(tipo);
       // Los KPI de mejor/crítica comparan ÁREAS: usan la escala de áreas (0–100 en Saber),
       // mientras el promedio general usa la escala global del PUNTAJE (0–500 en Saber).
@@ -787,7 +778,7 @@ const App = (function() {
       // Aclaración del promedio general: en Saber es el Puntaje Global oficial ponderado
       // (IG = (3·LC + 3·MA + 3·CN + 3·SC + 1·IN)/13, PG = IG×5), no el promedio simple de áreas.
       setText('kpi-promedio-hint', tipo === 'saber'
-        ? 'Puntaje Global oficial ICFES (ponderado), no promedio simple de áreas'
+        ? 'Puntaje Global oficial ICFES (ponderado)'
         : 'Promedio en escala de 1 a 5');
 
       // Nivel de desempeño del promedio según la escala oficial del tipo
@@ -914,6 +905,20 @@ const App = (function() {
   function getPruebaCatalog() {
     const raw = (state.configs.pruebas && state.configs.pruebas.pruebas) ? state.configs.pruebas.pruebas : [];
     return raw.slice().sort((a, b) => (Number(a.orden) || 99) - (Number(b.orden) || 99));
+  }
+
+  /**
+   * Etiqueta visible de una prueba: el nombre de config/pruebas.json cuando el
+   * código coincide; en caso contrario el código presente en el consolidado,
+   * sin asumir nombres de pruebas que no están en los datos.
+   */
+  function pruebaLabel(codigo) {
+    const code = pruebaCode(codigo);
+    const cfg = getPruebaCatalog().find(cp => {
+      const nombre = pruebaCode(cp.nombre);
+      return pruebaCode(cp.id) === code || nombre === code || nombre.endsWith(' ' + code);
+    });
+    return cfg && cfg.nombre ? cfg.nombre : code;
   }
 
   /**
@@ -1086,7 +1091,7 @@ const App = (function() {
 
         html += `
           <tr>
-            <td><strong>Misión ${p}</strong></td>
+            <td><strong>${escapeHtml(pruebaLabel(p))}</strong></td>
             <td>${escalaPrueba.etiqueta} ${escalaPrueba.minimo}–${escalaPrueba.maximo} · Áreas ${escalaAreaPrueba.minimo}–${escalaAreaPrueba.maximo}</td>
             <td>${pRecords.length}</td>
             <td class="score-cell">${currentAvg > 0 ? currentAvg.toFixed(2) : '-'}</td>
@@ -1157,7 +1162,7 @@ const App = (function() {
           </td>
           <td>Grado ${row.GRADO}°</td>
           <td>Grupo ${row.GRUPO}</td>
-          <td><span class="badge-desempeno" style="background:#f1f5f9; color:#334155;">Misión ${row.PRUEBA}</span></td>
+          <td><span class="badge-desempeno" style="background:#f1f5f9; color:#334155;">${escapeHtml(pruebaLabel(row.PRUEBA))}</span></td>
           <td class="score-cell">${row.PUNTAJE}</td>
           <td>
             <span class="badge-desempeno badge-${desInfo.key.toLowerCase()}">
@@ -1205,7 +1210,6 @@ const App = (function() {
     // lee su columna propia: en Saber el área de Lenguaje es LECTURA CRÍTICA
     // y en periódicas es LENGUAJE.
     let tiposArea = getTiposPresentes(records);
-    if (tiposArea.length === 0) tiposArea = ['periodica'];
 
     const datosPorTipo = {};
     tiposArea.forEach(tipo => {
@@ -1457,13 +1461,19 @@ const App = (function() {
 
     const records = state.currentFilteredRecords;
     const filterState = window.Filters.getState();
-    const ciclos = (state.configs.institucion && state.configs.institucion.ciclos) ? state.configs.institucion.ciclos : {
-      "1": ["1", "2", "3"],
-      "2": ["4", "5"],
-      "3": ["6", "7"],
-      "4": ["8", "9"],
-      "5": ["10", "11"]
-    };
+
+    // Ciclos realmente presentes en el consolidado: se agrupan los grados con
+    // registros según su ciclo oficial. No se muestran ciclos sin datos ni
+    // grados que no aparezcan en el archivo.
+    const ciclos = {};
+    [...new Set(state.rawRecords.map(r => String(r.GRADO).trim()).filter(Boolean))]
+      .sort(window.Filters.compararGrados)
+      .forEach(grado => {
+        const cNum = window.Filters.getCicloForGrade(grado);
+        if (cNum === null) return;
+        if (!ciclos[cNum]) ciclos[cNum] = [];
+        ciclos[cNum].push(grado);
+      });
 
     const tipos = getTiposPresentes(records);
     const tbody = document.getElementById('table-ciclos-body');
@@ -1622,7 +1632,7 @@ const App = (function() {
         const colLenguaje = window.Filters.getAreaColumn('Lenguaje', window.Filters.getTipoPrueba(t.PRUEBA));
         return `
           <tr>
-            <td><strong>Misión ${t.PRUEBA}</strong></td>
+            <td><strong>${escapeHtml(pruebaLabel(t.PRUEBA))}</strong></td>
             <td>Grado ${t.GRADO}° (${t.GRUPO})</td>
             <td>Puesto ${t.PUESTO || '-'}</td>
             <td class="score-cell">${t.PUNTAJE}</td>
@@ -1671,13 +1681,22 @@ const App = (function() {
   // MÓDULO 8: Centro de Exportación
   // ==========================================================================
 
+  /**
+   * Etiqueta visible de un tipo de prueba para resúmenes y exportación,
+   * tomada de la escala configurada; nunca un tipo supuesto.
+   */
+  function etiquetaTipo(tipo) {
+    if (tipo === 'todos') return 'Todos';
+    return window.Filters.getEscala(tipo).etiqueta;
+  }
+
   function renderExportacionModule() {
     const records = state.currentFilteredRecords;
     const filterState = window.Filters.getState();
 
     setText('export-count-records', `${records.length} registros listos para exportar`);
     setText('export-filter-summary', `
-      Filtros: Tipo [${filterState.tipoPrueba}], Prueba [${filterState.prueba}], 
+      Filtros: Tipo [${etiquetaTipo(filterState.tipoPrueba)}], Prueba [${filterState.prueba}], 
       Ciclo [${filterState.ciclo}], Grado [${filterState.grado}], Grupo [${filterState.grupo}]
     `);
   }
