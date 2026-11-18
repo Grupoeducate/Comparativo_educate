@@ -993,7 +993,8 @@ const App = (function() {
 
   function renderEvolucionModule() {
     const records = state.currentFilteredRecords;
-    const pruebas = getAvailablePruebas();
+    // La matriz solo muestra las pruebas que sobreviven a los filtros activos
+    const pruebas = getAvailablePruebas(records);
     const areasList = getAreasList();
     const tipos = getTiposPresentes(records);
 
@@ -1052,7 +1053,11 @@ const App = (function() {
 
     const tbody = document.getElementById('table-evolucion-body');
     if (tbody && pruebas.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" class="text-center">El consolidado no contiene pruebas registradas.</td></tr>';
+      const hayPruebasEnConsolidado = getAvailablePruebas().length > 0;
+      const mensaje = hayPruebasEnConsolidado
+        ? 'Ninguna prueba del consolidado coincide con los filtros aplicados.'
+        : 'El consolidado no contiene pruebas registradas.';
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center">${mensaje}</td></tr>`;
     }
     if (tbody && pruebas.length > 0) {
       let html = '';
