@@ -20,6 +20,12 @@ const Exports = (function() {
     const filename = `VisorEducate360_${instName}_${timestamp}.xlsx`;
 
     // Mapear registros con encabezados claros y profesionales
+    // La columna de lenguaje depende de la escala: las pruebas Saber evalúan Lectura Crítica
+    const lenguajeExport = (r) => {
+      const valor = window.Filters.getAreaScore(r, 'Lenguaje', window.Filters.getTipoPrueba(r.PRUEBA));
+      return isNaN(valor) ? '' : valor;
+    };
+
     const cleanRows = records.map(r => ({
       'Prueba': r.PRUEBA || '',
       'Grado': r.GRADO || '',
@@ -29,7 +35,7 @@ const Exports = (function() {
       'Estudiante': r.ESTUDIANTE || '',
       'Puntaje Global': r.PUNTAJE !== '' ? parseFloat(String(r.PUNTAJE).replace(',', '.')) : '',
       'Desempeño': r.DESEMPEÑO || '',
-      'Lenguaje': r.LENGUAJE !== '' ? parseFloat(String(r.LENGUAJE).replace(',', '.')) : '',
+      'Lenguaje / L. Crítica': lenguajeExport(r),
       'Ciencias Naturales': r['CIENCIAS NATURALES'] !== '' ? parseFloat(String(r['CIENCIAS NATURALES']).replace(',', '.')) : '',
       'Biología': r['BIOLOGÍA'] !== '' ? parseFloat(String(r['BIOLOGÍA']).replace(',', '.')) : '',
       'Física': r['FÍSICA'] !== '' ? parseFloat(String(r['FÍSICA']).replace(',', '.')) : '',
