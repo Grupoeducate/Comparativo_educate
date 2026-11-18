@@ -69,11 +69,17 @@ const App = (function() {
       setupNavigation();
       setupEventListeners();
 
-      if (window.Auth && window.Auth.isAuthenticated()) {
+      // Sesión restaurada válida solo si el DANE sigue registrado y con datos publicados
+      if (window.Auth && window.Auth.isSessionValid()) {
         const session = window.Auth.getSession();
         updateUserUI(session);
-        await loadDataset(session.dane);
-        bootApplication();
+        try {
+          await loadDataset(session.dane);
+          bootApplication();
+        } catch (datasetErr) {
+          console.error(datasetErr);
+          window.Auth.logout();
+        }
       } else {
         showLoginOverlay(true);
       }
@@ -86,26 +92,36 @@ const App = (function() {
   }
 
   /**
-   * Carga los archivos JSON de configuración
-   * Utiliza window.EDUCATE360_CONFIG si está precargado, o fetch con fallbacks
+   * Carga los archivos JSON de configuración.
+   * Fuente de verdad: config/*.json (usuarios, institución, pruebas, escalas, desempeños, áreas).
+   * Ventaja sobre config_data.js: sirve cuando el visor se publica en hosting estático (GitHub Pages).
+   * El bundle window.EDUCATE360_CONFIG queda como respaldo para apertura local con file://.
    */
   async function loadConfigurations() {
     const cfg = window.EDUCATE360_CONFIG || {};
 
-    const fetchJson = async (path, fallback) => {
+    // Devuelve null cuando el JSON no está disponible (por ejemplo bajo file://)
+    const fetchJson = async (path) => {
       try {
         const res = await fetch(path);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
       } catch (e) {
-        return fallback;
+        return null;
       }
     };
 
-    const institucion = cfg.institucion || await fetchJson('config/institucion.json', {
+    // Resolución de configuración: JSON publicado > bundle config_data.js > respaldo mínimo
+    const pick = async (path, bundled, hardFallback) => {
+      const fetched = await fetchJson(path);
+      if (fetched) return fetched;
+      if (bundled) return bundled;
+      return hardFallback;
+    };
+
+    const institucion = await pick('config/institucion.json', cfg.institucion, {
       nombre: 'Colegio Cambridge',
       dane: '425377076576',
-      pin: '4587',
       ciudad: 'Bogotá',
       anio_lectivo: 2026,
       ciclos: {
@@ -118,13 +134,10 @@ const App = (function() {
       }
     });
 
-    const usuarios = cfg.usuarios || await fetchJson('config/usuarios.json', {
-      usuarios: [
-        { dane: '425377076576', clave: '4587', nombre: 'Colegio Cambridge', ciudad: 'Bogotá' }
-      ]
-    });
+    // Sin usuarios registrados no hay acceso posible: no se usa ningún usuario por defecto
+    const usuarios = await pick('config/usuarios.json', cfg.usuarios, { usuarios: [] });
 
-    const pruebas = cfg.pruebas || await fetchJson('config/pruebas.json', {
+    const pruebas = await pick('config/pruebas.json', cfg.pruebas, {
       pruebas: [
         { id: 'ALFA', nombre: 'Misión Alfa', tipo: 'periodica', orden: 1 },
         { id: 'BETA', nombre: 'Misión Beta', tipo: 'periodica', orden: 2 },
@@ -132,9 +145,9 @@ const App = (function() {
       ]
     });
 
-    const escalas = cfg.escalas || await fetchJson('config/escalas.json', {});
-    const desempenos = cfg.desempenos || await fetchJson('config/desempenos.json', {});
-    const areas = cfg.areas || await fetchJson('config/areas.json', {
+    const escalas = await pick('config/escalas.json', cfg.escalas, {});
+    const desempenos = await pick('config/desempenos.json', cfg.desempenos, {});
+    const areas = await pick('config/areas.json', cfg.areas, {
       areas: [
         { nombre: 'Lenguaje', orden: 1, componentes: [] },
         { nombre: 'Matematicas', orden: 2, componentes: ['Estadistica', 'Geometria', 'Aritmetica'] },
@@ -149,11 +162,15 @@ const App = (function() {
 
   /**
    * Carga y parsea el archivo de pruebas dirigiéndose a la subcarpeta identificada con el DANE ingresado.
-   * Proceso 100% transparente: prioriza datos en memoria para evitar advertencias de apertura local.
+   * Solo se aceptan archivos dentro de data/{dane}/: no existen rutas genéricas compartidas entre instituciones.
    */
   async function loadDataset(dane) {
     let csvText = '';
-    const cleanDane = String(dane || (window.Auth && window.Auth.getSession() ? window.Auth.getSession().dane : '') || '425377076576').trim();
+    const cleanDane = String(dane || '').trim();
+
+    if (!cleanDane) {
+      throw new Error('No hay un código DANE activo en la sesión para cargar el consolidado.');
+    }
 
     // 1. Revisar si el consolidado data/{dane}/ ya está precargado en memoria
     if (window.EDUCATE360_DATA && window.EDUCATE360_DATA[cleanDane]) {
@@ -162,14 +179,11 @@ const App = (function() {
       console.log(`[Educate 360°] Consolidado institucional data/${cleanDane}/ cargado directamente desde memoria.`);
     }
 
-    // 2. Si no está en memoria, intentar fetch desde la subcarpeta data/{dane}/ y rutas prioritarias
+    // 2. Si no está en memoria, intentar fetch únicamente dentro de la carpeta del DANE
     if (!csvText) {
       const pathsToTry = [
         `data/${cleanDane}/consolidado_total.csv`,
-        `data/${cleanDane}/dashboard_data.csv`,
-        `data/${cleanDane}.csv`,
-        `data/consolidado_total.csv`,
-        `pruebas/consolidado_total.csv`
+        `data/${cleanDane}/dashboard_data.csv`
       ];
       
       for (const p of pathsToTry) {
@@ -187,71 +201,82 @@ const App = (function() {
     }
 
     if (!csvText) {
-      if (window.location.protocol === 'file:') {
-        csvText = await requestManualCsvSelection(cleanDane);
-      } else {
-        throw new Error(`No se pudo localizar el archivo de pruebas en data/${cleanDane}/ ni en rutas alternativas.`);
-      }
+      throw new Error(`No se encontró el consolidado de pruebas en data/${cleanDane}/. Publique la carpeta de la institución antes de habilitar el acceso.`);
     }
 
-    state.rawRecords = parseSemicolonCSV(csvText);
+    state.rawRecords = parseCsvText(csvText);
+    if (state.rawRecords.length === 0) {
+      throw new Error(`El consolidado de data/${cleanDane}/ no contiene registros legibles. Verifique el archivo y su separador de columnas.`);
+    }
     state.currentFilteredRecords = [...state.rawRecords];
   }
 
   /**
-   * Respaldo para apertura directa mediante protocolo file:// cuando no hay precarga en memoria
+   * Detecta el separador del consolidado a partir de la línea de encabezados.
+   * Cada institución exporta su archivo con punto y coma (;) o con coma (,).
    */
-  function requestManualCsvSelection(dane) {
-    return new Promise((resolve, reject) => {
-      const loader = document.getElementById('global-loader');
-      if (loader) {
-        loader.innerHTML = `
-          <div style="background:#1e293b; padding:2rem; border-radius:16px; max-width:480px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); border:1px solid #334155;">
-            <h3 style="font-size:1.2rem; font-weight:700; color:#fff; margin-bottom:0.75rem;">Apertura Local del Visor</h3>
-            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:1.25rem; line-height:1.5;">
-              Cargue el consolidado de pruebas para la institución con DANE <strong>${dane}</strong>:
-            </p>
-            <label class="btn-primary" style="display:inline-block; cursor:pointer; padding:0.75rem 1.5rem; background:#0284c7;">
-              Seleccionar data/${dane}/consolidado_total.csv
-              <input type="file" id="fallback-csv-picker" accept=".csv" style="display:none;">
-            </label>
-          </div>
-        `;
-
-        const fileInput = document.getElementById('fallback-csv-picker');
-        fileInput.addEventListener('change', (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = (evt) => {
-            loader.style.display = 'none';
-            resolve(evt.target.result);
-          };
-          reader.onerror = () => reject(new Error('Error leyendo archivo CSV'));
-          reader.readAsText(file, 'utf-8');
-        });
-      } else {
-        reject(new Error('No se pudo cargar el archivo CSV'));
+  function detectDelimiter(headerLine) {
+    const candidates = [';', ',', '\t'];
+    let best = ';';
+    let bestColumns = 1;
+    candidates.forEach(candidate => {
+      const columns = splitDelimitedLine(headerLine, candidate).length;
+      if (columns > bestColumns) {
+        best = candidate;
+        bestColumns = columns;
       }
     });
+    return best;
   }
 
   /**
-   * Parseador robusto de CSV delimitado por punto y coma (;)
+   * Separa una línea de CSV respetando los campos entre comillas dobles.
    */
-  function parseSemicolonCSV(text) {
+  function splitDelimitedLine(line, delimiter) {
+    const cells = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+      if (char === delimiter && !inQuotes) {
+        cells.push(current);
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+
+    cells.push(current);
+    return cells;
+  }
+
+  /**
+   * Parseador robusto de CSV con autodetección de separador (; o ,)
+   */
+  function parseCsvText(text) {
     if (!text) return [];
     const cleanText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
     const lines = cleanText.split(/\r?\n/).filter(line => line.trim().length > 0);
     if (lines.length === 0) return [];
 
-    const headers = lines[0].split(';').map(h => h.trim());
+    const delimiter = detectDelimiter(lines[0]);
+    const headers = splitDelimitedLine(lines[0], delimiter).map(h => h.trim());
     const records = [];
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
-      const cols = line.split(';');
+      const cols = splitDelimitedLine(line, delimiter);
       const row = {};
       headers.forEach((h, idx) => {
         row[h] = cols[idx] !== undefined ? cols[idx].trim() : '';
@@ -262,11 +287,12 @@ const App = (function() {
   }
 
   /**
-   * Configuración de la capa de autenticación con usuarios.json
+   * Configuración de la capa de autenticación con usuarios.json.
+   * El login valida registro del DANE, existencia de data/{dane}/ y coincidencia de clave.
    */
   function setupAuth() {
     window.Auth.init(state.configs.institucion, state.configs.usuarios);
-    
+
     window.Auth.onAuthStateChanged(async (isAuthed, session) => {
       if (isAuthed && session) {
         showLoginOverlay(false);
@@ -277,7 +303,9 @@ const App = (function() {
           bootApplication();
         } catch (err) {
           console.error(err);
-          showGlobalError(`No se pudieron cargar los datos de la subcarpeta data/${session.dane}/`);
+          // Sin consolidado publicado no se habilita el visor para esa institución
+          window.Auth.logout();
+          showGlobalError(err.message || `No se pudieron cargar los datos de data/${session.dane}/`);
         } finally {
           showLoading(false);
         }
@@ -288,20 +316,33 @@ const App = (function() {
 
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
-      loginForm.addEventListener('submit', (e) => {
+      loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const dane = document.getElementById('login-dane').value;
-        const pin = document.getElementById('login-pin').value;
+        const daneInp = document.getElementById('login-dane');
+        const pinInp = document.getElementById('login-pin');
         const errEl = document.getElementById('login-error');
+        const submitBtn = loginForm.querySelector('button[type="submit"]');
+        if (!daneInp || !pinInp) return;
 
-        const result = window.Auth.login(dane, pin);
-        if (!result.success) {
-          if (errEl) {
+        if (submitBtn) submitBtn.disabled = true;
+        if (errEl) errEl.style.display = 'none';
+
+        try {
+          const result = await window.Auth.login(daneInp.value, pinInp.value);
+          if (!result.success && errEl) {
             errEl.textContent = result.message;
             errEl.style.display = 'block';
+            if (pinInp) pinInp.value = '';
+            pinInp.focus();
           }
-        } else {
-          if (errEl) errEl.style.display = 'none';
+        } catch (err) {
+          console.error(err);
+          if (errEl) {
+            errEl.textContent = 'No fue posible verificar sus credenciales. Intente nuevamente.';
+            errEl.style.display = 'block';
+          }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
         }
       });
     }
@@ -652,12 +693,64 @@ const App = (function() {
   }
 
   // ==========================================================================
-  // MÓDULO 2: Evolución Institucional (Alpha -> Beta -> Gamma)
+  // Pruebas disponibles en el consolidado de la institución
+  // ==========================================================================
+
+  /**
+   * Catálogo de pruebas configurado en config/pruebas.json, ordenado por 'orden'.
+   */
+  function getPruebaCatalog() {
+    const raw = (state.configs.pruebas && state.configs.pruebas.pruebas) ? state.configs.pruebas.pruebas : [];
+    return raw.slice().sort((a, b) => (Number(a.orden) || 99) - (Number(b.orden) || 99));
+  }
+
+  /**
+   * Código de prueba normalizado, tal como llega en la columna PRUEBA del consolidado.
+   */
+  function pruebaCode(value) {
+    return String(value === undefined || value === null ? '' : value).trim().toUpperCase();
+  }
+
+  /**
+   * Posición de una prueba dentro del catálogo configurado. Las no configuradas van al final.
+   */
+  function pruebaOrder(code) {
+    const catalog = getPruebaCatalog();
+    const idx = catalog.findIndex(cp => {
+      const id = pruebaCode(cp.id);
+      const nombre = pruebaCode(cp.nombre);
+      return id === code || nombre === code || nombre.endsWith(' ' + code);
+    });
+    return idx === -1 ? catalog.length : idx;
+  }
+
+  /**
+   * Pruebas realmente presentes en el consolidado de la institución.
+   * Las gráficas, tablas y filtros solo muestran estas pruebas: nunca ejes de pruebas inexistentes en el CSV.
+   */
+  function getAvailablePruebas(records) {
+    const source = records || state.rawRecords || [];
+    const present = [];
+    source.forEach(r => {
+      const code = pruebaCode(r.PRUEBA);
+      if (code && !present.includes(code)) present.push(code);
+    });
+
+    const csvOrder = new Map(present.map((code, idx) => [code, idx]));
+    return present.sort((a, b) => {
+      const byCatalog = pruebaOrder(a) - pruebaOrder(b);
+      if (byCatalog !== 0) return byCatalog;
+      return csvOrder.get(a) - csvOrder.get(b);
+    });
+  }
+
+  // ==========================================================================
+  // MÓDULO 2: Evolución Institucional (secuencia de pruebas del consolidado)
   // ==========================================================================
 
   function renderEvolucionModule() {
     const records = state.currentFilteredRecords;
-    const pruebas = ['ALFA', 'BETA', 'GAMMA'];
+    const pruebas = getAvailablePruebas();
     const areasList = ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
 
     const generalAverages = [];
@@ -683,14 +776,19 @@ const App = (function() {
     });
 
     // Gráfico de línea interactivo (permite ocultar/mostrar líneas de área haciendo clic en la leyenda)
-    window.Charts.renderEvolutionChart('chart-evolucion-general', {
-      pruebas,
-      promedioGeneral: generalAverages,
-      areas: areaAveragesMap
-    });
+    if (pruebas.length > 0) {
+      window.Charts.renderEvolutionChart('chart-evolucion-general', {
+        pruebas,
+        promedioGeneral: generalAverages,
+        areas: areaAveragesMap
+      });
+    }
 
     const tbody = document.getElementById('table-evolucion-body');
-    if (tbody) {
+    if (tbody && pruebas.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center">El consolidado no contiene pruebas registradas.</td></tr>';
+    }
+    if (tbody && pruebas.length > 0) {
       let html = '';
       pruebas.forEach((p, idx) => {
         const pRecords = records.filter(r => String(r.PRUEBA).toUpperCase() === p);
@@ -1108,8 +1206,12 @@ const App = (function() {
     const tests = state.rawRecords.filter(r => window.Filters.normalizarNombre(r.ESTUDIANTE) === norm);
     if (tests.length === 0) return;
 
-    const orderMap = { 'ALFA': 1, 'BETA': 2, 'GAMMA': 3 };
-    tests.sort((a, b) => (orderMap[a.PRUEBA] || 99) - (orderMap[b.PRUEBA] || 99));
+    const order = new Map(getAvailablePruebas().map((code, idx) => [code, idx]));
+    const orderOf = (value) => {
+      const code = pruebaCode(value);
+      return order.has(code) ? order.get(code) : order.size + 1;
+    };
+    tests.sort((a, b) => orderOf(a.PRUEBA) - orderOf(b.PRUEBA));
 
     const latest = tests[tests.length - 1];
     setText('modal-student-name', latest.ESTUDIANTE);
