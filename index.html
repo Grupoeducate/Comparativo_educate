@@ -46,12 +46,12 @@
           <div class="form-group">
             <label for="login-dane">Código DANE Institucional</label>
             <input type="text" id="login-dane" placeholder="Ingrese el código DANE" value="" required autofocus autocomplete="username">
-            <div class="auth-hint">Código asignado por el Ministerio de Educación</div>
+            <div class="auth-hint">La institución debe estar registrada en config/usuarios.json</div>
           </div>
           <div class="form-group">
             <label for="login-pin">Clave de Acceso (4 dígitos)</label>
             <input type="password" id="login-pin" placeholder="••••" maxlength="4" value="" required autocomplete="current-password">
-            <div class="auth-hint">Clave numérica de 4 dígitos institucional (config/usuarios.json)</div>
+            <div class="auth-hint">Debe coincidir con la clave registrada y existir la carpeta data/{DANE}/</div>
           </div>
           <button type="submit" class="btn-login">Ingresar al Visor</button>
         </form>

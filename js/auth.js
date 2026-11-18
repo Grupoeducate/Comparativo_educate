@@ -1,10 +1,16 @@
 /**
  * Visor Educate 360° - Módulo de Autenticación
- * Autenticación mediante DANE + PIN/Clave de 4 dígitos basado en config/usuarios.json
+ * Acceso restringido a instituciones que cumplen las tres condiciones:
+ *   1. El DANE ingresado tiene una carpeta publicada en data/{dane}/.
+ *   2. El DANE está registrado en config/usuarios.json.
+ *   3. La clave ingresada coincide con la del usuario registrado (validación final).
  */
 
 const Auth = (function() {
   const SESSION_KEY = 'visor_educate_360_auth';
+  // Archivos que identifican una carpeta data/{dane}/ con datos publicados
+  const DATASET_FILES = ['consolidado_total.csv', 'dashboard_data.csv'];
+
   let institucionData = {};
   let usersList = [];
   let authCallbacks = [];
@@ -13,30 +19,64 @@ const Auth = (function() {
     institucionData = configInst || {};
     usersList = (configUsers && configUsers.usuarios) ? configUsers.usuarios : [];
 
-    // Fallback si no hay lista de usuarios cargada
-    if (usersList.length === 0 && institucionData.dane) {
-      usersList.push({
-        dane: String(institucionData.dane).trim(),
-        clave: String(institucionData.pin || institucionData.clave || '4587').trim(),
-        nombre: institucionData.nombre || 'Colegio Cambridge',
-        ciudad: institucionData.ciudad || 'Bogotá'
-      });
-    }
-
-    const isAuthed = isAuthenticated();
+    const isAuthed = isSessionValid();
+    if (!isAuthed) clearSession();
     notify(isAuthed);
     return isAuthed;
   }
 
-  function isAuthenticated() {
-    try {
-      const stored = sessionStorage.getItem(SESSION_KEY);
-      if (!stored) return false;
-      const parsed = JSON.parse(stored);
-      return parsed && parsed.authenticated === true && !!parsed.dane;
-    } catch (e) {
-      return false;
+  function normalize(value) {
+    return String(value === undefined || value === null ? '' : value).trim();
+  }
+
+  function findUser(dane) {
+    const cleanDane = normalize(dane);
+    if (!cleanDane) return null;
+    return usersList.find(u => normalize(u.dane) === cleanDane) || null;
+  }
+
+  /**
+   * Verifica que exista la carpeta data/{dane}/ con un consolidado publicado.
+   * - Precarga en memoria (data/{dane}/datos.js) cuenta como carpeta existente.
+   * - Servido por HTTP: se consulta el consolidado dentro de la carpeta del DANE.
+   * - Bajo file:// sin precarga no es posible verificar la carpeta: se rechaza.
+   */
+  async function hasPublishedData(dane) {
+    const cleanDane = normalize(dane);
+    if (!cleanDane) return false;
+
+    if (window.EDUCATE360_DATA && window.EDUCATE360_DATA[cleanDane]) return true;
+
+    const protocol = (window.location && window.location.protocol) || '';
+    if (protocol === 'file:' || typeof fetch !== 'function') return false;
+
+    for (const file of DATASET_FILES) {
+      try {
+        const res = await fetch(`data/${cleanDane}/${file}`, { cache: 'no-store' });
+        if (!res || !res.ok) continue;
+        const contentType = (res.headers && typeof res.headers.get === 'function')
+          ? String(res.headers.get('content-type') || '').toLowerCase()
+          : '';
+        // Un hosting que responde 200 con una página HTML no prueba que la carpeta exista
+        if (contentType.includes('html')) continue;
+        return true;
+      } catch (e) {
+        // Continuar con el siguiente archivo de la carpeta del DANE
+      }
     }
+    return false;
+  }
+
+  function isAuthenticated() {
+    const session = getSession();
+    return !!(session && session.authenticated === true && session.dane);
+  }
+
+  /** Sesión restaurada válida solo si el DANE sigue registrado en usuarios.json */
+  function isSessionValid() {
+    const session = getSession();
+    if (!session || session.authenticated !== true || !session.dane) return false;
+    return !!findUser(session.dane);
   }
 
   function getSession() {
@@ -48,52 +88,66 @@ const Auth = (function() {
     }
   }
 
-  function login(daneInput, pinInput) {
-    const cleanDane = String(daneInput || '').trim();
-    const cleanPin = String(pinInput || '').trim();
+  function clearSession() {
+    sessionStorage.removeItem(SESSION_KEY);
+  }
 
-    // 1. Buscar en la lista de usuarios (config/usuarios.json)
-    let foundUser = usersList.find(u => {
-      const uDane = String(u.dane || '').trim();
-      const uKey = String(u.clave || u.pin || '').trim();
-      return uDane === cleanDane && uKey === cleanPin;
-    });
+  async function login(daneInput, claveInput) {
+    const cleanDane = normalize(daneInput);
+    const cleanClave = normalize(claveInput);
 
-    // 2. Respaldo contra institucion.json
-    if (!foundUser && institucionData.dane) {
-      const instDane = String(institucionData.dane).trim();
-      const instPin = String(institucionData.pin || institucionData.clave || '4587').trim();
-      if (cleanDane === instDane && cleanPin === instPin) {
-        foundUser = {
-          dane: instDane,
-          clave: instPin,
-          nombre: institucionData.nombre || 'Colegio Cambridge',
-          ciudad: institucionData.ciudad || 'Bogotá'
-        };
-      }
-    }
-
-    if (foundUser) {
-      const sessionData = {
-        authenticated: true,
-        dane: cleanDane,
-        institucion: foundUser.nombre || institucionData.nombre || 'Colegio Cambridge',
-        ciudad: foundUser.ciudad || institucionData.ciudad || '',
-        timestamp: new Date().toISOString()
-      };
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
-      notify(true);
-      return { success: true, user: sessionData };
-    } else {
-      return { 
-        success: false, 
-        message: 'Código DANE o clave de 4 dígitos incorrecta. Verifique sus credenciales.' 
+    if (!cleanDane || !cleanClave) {
+      return {
+        success: false,
+        reason: 'credenciales_incompletas',
+        message: 'Ingrese el código DANE y la clave institucional.'
       };
     }
+
+    // 1. Registro institucional en config/usuarios.json
+    const foundUser = findUser(cleanDane);
+    if (!foundUser) {
+      return {
+        success: false,
+        reason: 'dane_no_registrado',
+        message: `El DANE ${cleanDane} no está registrado como institución usuaria del visor.`
+      };
+    }
+
+    // 2. Carpeta de datos publicada para ese DANE
+    const hasData = await hasPublishedData(cleanDane);
+    if (!hasData) {
+      return {
+        success: false,
+        reason: 'sin_datos',
+        message: `No hay datos publicados para el DANE ${cleanDane}. Debe existir la carpeta data/${cleanDane}/ con su consolidado de pruebas.`
+      };
+    }
+
+    // 3. Validación final: la clave coincide con el usuario registrado
+    const expectedClave = normalize(foundUser.clave || foundUser.pin);
+    if (!expectedClave || expectedClave !== cleanClave) {
+      return {
+        success: false,
+        reason: 'clave_incorrecta',
+        message: `La clave no coincide con la registrada para el DANE ${cleanDane}.`
+      };
+    }
+
+    const sessionData = {
+      authenticated: true,
+      dane: cleanDane,
+      institucion: foundUser.nombre || institucionData.nombre || 'Institución Educativa',
+      ciudad: foundUser.ciudad || institucionData.ciudad || '',
+      timestamp: new Date().toISOString()
+    };
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+    notify(true);
+    return { success: true, user: sessionData };
   }
 
   function logout() {
-    sessionStorage.removeItem(SESSION_KEY);
+    clearSession();
     notify(false);
   }
 
@@ -117,6 +171,8 @@ const Auth = (function() {
   return {
     init,
     isAuthenticated,
+    isSessionValid,
+    hasPublishedData,
     getSession,
     login,
     logout,

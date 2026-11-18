@@ -11,6 +11,12 @@
       "clave": "1234",
       "nombre": "Colegio Departamental San José",
       "ciudad": "Barranquilla"
+    },
+    {
+      "dane": "111001086754",
+      "clave": "4587",
+      "nombre": "COLEGIO LA CONCEPCION IED",
+      "ciudad": "SOACHA"
     }
   ]
 }
