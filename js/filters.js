@@ -19,7 +19,21 @@ const Filters = (function() {
   let dataset = [];
   let configInstitucion = {};
   let configPruebas = [];
+  let configEscalas = {};
+  let configDesempenos = {};
   let onFilterChange = null;
+
+  // Pruebas que pertenecen a la escala periódica (1 a 5). El resto se evalúa como Saber (0 a 500).
+  const MARCAS_PERIODICAS = ['ALFA', 'BETA', 'GAMMA', 'DELTA'];
+
+  // Claves internas de los cuatro niveles. Se mantienen estables para tablas y gráficas;
+  // el nombre y el color visibles se toman de config/escalas.json y config/desempenos.json.
+  const NIVELES_BASE = [
+    { key: 'Bajo', color: '#bf0000' },
+    { key: 'Basico', color: '#ffbf00' },
+    { key: 'Alto', color: '#01b1f0' },
+    { key: 'Superior', color: '#01af51' }
+  ];
 
   /**
    * Normalización oficial según Sección 7 de informe.md:
@@ -39,33 +53,223 @@ const Filters = (function() {
   }
 
   /**
-   * Homologación y obtención de información de desempeño oficial (Sección 9 y 10.4)
-   * NO recalcula desempeño, conserva el dato oficial del CSV.
+   * Tipo de escala de una prueba.
+   * Las pruebas con ALFA, BETA, GAMMA o DELTA en el nombre son periódicas (escala 1 a 5);
+   * cualquier otra prueba (por ejemplo EPSILON) se evalúa como Saber (escala 0 a 500).
    */
-  function getDesempenoInfo(desempenoStr) {
+  function getTipoPrueba(prueba) {
+    const clave = normalizarNombre(prueba);
+    if (!clave) return 'periodica';
+    return MARCAS_PERIODICAS.some(marca => clave.includes(marca)) ? 'periodica' : 'saber';
+  }
+
+  // ==========================================================================
+  // Fuente única de columnas y etiquetas por área académica
+  // ==========================================================================
+
+  // Columnas del CSV por área (claves internas de config/areas.json).
+  // 'Lenguaje' se resuelve según la escala: las pruebas Saber reportan
+  // LECTURA CRÍTICA y las periódicas reportan LENGUAJE.
+  const AREA_COLUMN_BASE = {
+    'Lenguaje': 'LENGUAJE',
+    'Matematicas': 'MATEMÁTICAS',
+    'Ciencias Naturales': 'CIENCIAS NATURALES',
+    'Sociales': 'SOCIALES Y CIUDADANAS',
+    'Ingles': 'INGLÉS'
+  };
+
+  // Etiquetas visibles de cada área (claves internas -> texto de interfaz).
+  const AREA_LABEL_BASE = {
+    'Lenguaje': 'Lenguaje',
+    'Matematicas': 'Matemáticas',
+    'Ciencias Naturales': 'Ciencias Naturales',
+    'Sociales': 'Sociales',
+    'Ingles': 'Inglés'
+  };
+
+  /**
+   * Columna del CSV que contiene el puntaje de un área para la escala indicada.
+   * En pruebas Saber el área de Lenguaje corresponde a LECTURA CRÍTICA;
+   * en pruebas periódicas corresponde a LENGUAJE. Las demás áreas no cambian.
+   */
+  function getAreaColumn(areaNombre, tipo) {
+    const clave = String(areaNombre || '').trim();
+    if (clave === 'Lenguaje') {
+      return tipo === 'saber' ? 'LECTURA CRÍTICA' : 'LENGUAJE';
+    }
+    return AREA_COLUMN_BASE[clave] || clave.toUpperCase();
+  }
+
+  /**
+   * Etiqueta visible de un área según la escala: en pruebas Saber el área de
+   * Lenguaje se muestra como "Lectura Crítica"; en periódicas, "Lenguaje".
+   */
+  function getAreaLabel(areaNombre, tipo) {
+    const clave = String(areaNombre || '').trim();
+    if (clave === 'Lenguaje' && tipo === 'saber') return 'Lectura Crítica';
+    return AREA_LABEL_BASE[clave] || clave;
+  }
+
+  /**
+   * Convierte el texto de una celda del consolidado en número.
+   * Acepta decimales con coma, recorta espacios y devuelve NaN cuando está vacío.
+   */
+  function parsePuntajeCelda(valor) {
+    if (valor === undefined || valor === null) return NaN;
+    const texto = String(valor).trim();
+    if (texto === '') return NaN;
+    const numero = parseFloat(texto.replace(',', '.'));
+    return isNaN(numero) ? NaN : numero;
+  }
+
+  /**
+   * Puntaje numérico de un área en un registro según la escala indicada.
+   * Lee primero la columna propia de la escala y, solo si está vacía,
+   * recurre a la columna alternativa (un consolidado que mezcle ambas
+   * columnas de Lenguaje sigue siendo legible).
+   */
+  function getAreaScore(record, areaNombre, tipo) {
+    if (!record) return NaN;
+    const clave = String(areaNombre || '').trim();
+    let valor = parsePuntajeCelda(record[getAreaColumn(clave, tipo)]);
+    if (isNaN(valor) && clave === 'Lenguaje') {
+      const colAlterna = tipo === 'saber' ? 'LENGUAJE' : 'LECTURA CRÍTICA';
+      valor = parsePuntajeCelda(record[colAlterna]);
+    }
+    return valor;
+  }
+
+  /**
+   * Escala oficial del tipo de prueba según config/escalas.json.
+   */
+  function getEscala(tipo) {
+    const clave = tipo === 'saber' ? 'saber' : 'periodica';
+    const escala = configEscalas[clave] || {};
+    const defectos = clave === 'saber'
+      ? { minimo: 0, maximo: 500 }
+      : { minimo: 1, maximo: 5 };
+    const niveles = Array.isArray(escala.niveles) ? escala.niveles.slice() : [];
+    niveles.sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
+
+    return {
+      tipo: clave,
+      etiqueta: clave === 'saber' ? 'Saber' : 'Periódica',
+      minimo: isNaN(Number(escala.puntaje_minimo)) ? defectos.minimo : Number(escala.puntaje_minimo),
+      maximo: isNaN(Number(escala.puntaje_maximo)) ? defectos.maximo : Number(escala.puntaje_maximo),
+      niveles
+    };
+  }
+
+  /**
+   * Niveles de la escala con su clave interna, nombre oficial y color configurado.
+   */
+  function getNiveles(tipo) {
+    const escala = getEscala(tipo);
+    const colores = configDesempenos[escala.tipo] || {};
+
+    return NIVELES_BASE.map((base, idx) => {
+      const nivel = escala.niveles[idx] || null;
+      const nombreOficial = nivel && nivel.nombre ? String(nivel.nombre) : base.key;
+      const colorCfg = colores[nombreOficial] || colores[base.key] || {};
+      return {
+        key: base.key,
+        label: etiquetaNivel(nombreOficial),
+        color: colorCfg.color || base.color,
+        orden: idx + 1,
+        minimo: nivel && nivel.minimo !== undefined ? Number(nivel.minimo) : null,
+        maximo: nivel && nivel.maximo !== undefined ? Number(nivel.maximo) : null
+      };
+    });
+  }
+
+  /**
+   * Nombre visible del nivel con su acentuación correcta.
+   * config/escalas.json y config/desempenos.json escriben los nombres sin tilde
+   * porque se usan como claves de configuración.
+   */
+  function etiquetaNivel(nombre) {
+    const etiquetas = {
+      'Basico': 'Básico',
+      'Minimo': 'Mínimo',
+      'Insuficiente': 'Insuficiente',
+      'Satisfactorio': 'Satisfactorio',
+      'Avanzado': 'Avanzado',
+      'Bajo': 'Bajo',
+      'Alto': 'Alto',
+      'Superior': 'Superior'
+    };
+    return etiquetas[nombre] || nombre;
+  }
+
+  /**
+   * Etiquetas de los cuatro niveles según la escala del tipo de prueba.
+   */
+  function getNivelLabels(tipo) {
+    return getNiveles(tipo).map(nivel => nivel.label);
+  }
+
+  /**
+   * Colores oficiales de los cuatro niveles según la escala del tipo de prueba.
+   */
+  function getNivelColors(tipo) {
+    return getNiveles(tipo).map(nivel => nivel.color);
+  }
+
+  /**
+   * Nivel al que pertenece un puntaje, usando los rangos de config/escalas.json.
+   */
+  function getNivelPorPuntaje(tipo, puntaje) {
+    const niveles = getNiveles(tipo);
+    const valor = parseFloat(String(puntaje === undefined || puntaje === null ? '' : puntaje).replace(',', '.'));
+    if (isNaN(valor)) return { ...niveles[1], tipo: getEscala(tipo).tipo };
+
+    const encontrado = niveles.find(nivel => nivel.minimo !== null && nivel.maximo !== null
+      && valor >= nivel.minimo && valor <= nivel.maximo);
+    if (encontrado) return { ...encontrado, tipo: getEscala(tipo).tipo };
+
+    const primero = niveles[0];
+    const ultimo = niveles[niveles.length - 1];
+    const fueraDeRango = (primero.minimo !== null && valor < primero.minimo) ? primero : ultimo;
+    return { ...fueraDeRango, tipo: getEscala(tipo).tipo };
+  }
+
+  /**
+   * Homologación de desempeño oficial (Sección 9 y 10.4) según la escala del tipo de prueba.
+   * NO recalcula desempeño: conserva el dato oficial del CSV.
+   * Los códigos del consolidado terminan en el número de nivel (BJ/1, B/2, A/3, S/4 en periódicas;
+   * I/1, M/2, S/3, A/4 en Saber), por lo que ese número determina el nivel en ambas escalas.
+   */
+  function getDesempenoInfo(desempenoStr, tipo) {
+    const tipoEscala = tipo === 'saber' ? 'saber' : (tipo === 'periodica' ? 'periodica' : 'periodica');
+    const niveles = getNiveles(tipoEscala);
+    const porSlot = (indice) => ({ ...(niveles[indice] || niveles[1]), tipo: tipoEscala });
+
     if (!desempenoStr) {
-      return { nivel: 'Basico', label: 'Sin Datos', color: '#94a3b8', orden: 2, key: 'Basico' };
-    }
-    const d = String(desempenoStr).toUpperCase().trim();
-    
-    // Bajo / Insuficiente (#bf0000)
-    if (d.includes('BJ') || d.includes('BAJO') || d.includes('INSUF')) {
-      return { nivel: 'Bajo', label: 'Bajo', color: '#bf0000', orden: 1, key: 'Bajo' };
-    }
-    // Basico / Minimo (#ffbf00)
-    if (d.includes('B / 2') || d === 'B' || d.startsWith('B /') || d.includes('BASICO') || d.includes('MINIMO')) {
-      return { nivel: 'Basico', label: 'Básico', color: '#ffbf00', orden: 2, key: 'Basico' };
-    }
-    // Alto / Satisfactorio (#01b1f0)
-    if (d.includes('A / 3') || d === 'A' || d.startsWith('A /') || d.includes('ALTO') || d.includes('SATIS')) {
-      return { nivel: 'Alto', label: 'Alto', color: '#01b1f0', orden: 3, key: 'Alto' };
-    }
-    // Superior / Avanzado (#01af51)
-    if (d.includes('S / 4') || d === 'S' || d.startsWith('S /') || d.includes('SUPERIOR') || d.includes('AVANZ')) {
-      return { nivel: 'Superior', label: 'Superior', color: '#01af51', orden: 4, key: 'Superior' };
+      return { ...porSlot(1), label: 'Sin Datos', color: '#94a3b8' };
     }
 
-    return { nivel: 'Basico', label: desempenoStr, color: '#ffbf00', orden: 2, key: 'Basico' };
+    const texto = normalizarNombre(desempenoStr);
+
+    // Códigos oficiales del consolidado: letras y número de nivel
+    const codigo = texto.match(/^([A-Z]{1,2})\s*\/\s*([1-4])$/);
+    if (codigo) {
+      return porSlot(Number(codigo[2]) - 1);
+    }
+
+    // Nombres completos de nivel
+    const nombresPorSlot = [
+      ['BAJO', 'INSUFICIENTE', 'INSUF', 'BJ'],
+      ['BASICO', 'MINIMO', 'B'],
+      ['ALTO', 'SATISFACTORIO', 'SATIS', 'A'],
+      ['SUPERIOR', 'AVANZADO', 'AVANZ', 'S']
+    ];
+    for (let idx = 0; idx < nombresPorSlot.length; idx++) {
+      if (nombresPorSlot[idx].some(nombre => texto === nombre || texto.includes(nombre))) {
+        return porSlot(idx);
+      }
+    }
+
+    return { ...porSlot(1), label: desempenoStr };
   }
 
   /**
@@ -109,6 +313,8 @@ const Filters = (function() {
     dataset = records || [];
     configInstitucion = configs.institucion || {};
     configPruebas = (configs.pruebas && configs.pruebas.pruebas) ? configs.pruebas.pruebas : [];
+    configEscalas = configs.escalas || {};
+    configDesempenos = configs.desempenos || {};
     onFilterChange = callback;
 
     bindUIEvents();
@@ -221,20 +427,13 @@ const Filters = (function() {
     rawPruebas.forEach(p => {
       let include = true;
       if (selectedTipo !== 'todos') {
-        const found = configPruebas.find(cp => 
-          normalizarNombre(cp.nombre).includes(normalizarNombre(p)) ||
-          normalizarNombre(cp.id || '').includes(normalizarNombre(p)) ||
-          normalizarNombre(cp.carpeta || '').includes(normalizarNombre(p))
-        );
-        if (found && found.tipo !== selectedTipo) {
-          include = false;
-        }
+        include = getTipoPrueba(p) === selectedTipo;
       }
 
       if (include) {
         const opt = document.createElement('option');
         opt.value = p;
-        const cfgMatch = configPruebas.find(cp => normalizarNombre(cp.nombre).includes(normalizarNombre(p)));
+        const cfgMatch = configPruebas.find(cp => normalizarNombre(cp.id || '') === normalizarNombre(p));
         opt.textContent = cfgMatch ? cfgMatch.nombre : `Misión ${p}`;
         sel.appendChild(opt);
       }
@@ -376,11 +575,7 @@ const Filters = (function() {
     return dataset.filter(row => {
       // 1. Filtro Tipo de Prueba
       if (state.tipoPrueba !== 'todos') {
-        const found = configPruebas.find(cp => 
-          normalizarNombre(cp.nombre).includes(normalizarNombre(row.PRUEBA)) ||
-          normalizarNombre(cp.id || '').includes(normalizarNombre(row.PRUEBA))
-        );
-        if (found && found.tipo !== state.tipoPrueba) {
+        if (getTipoPrueba(row.PRUEBA) !== state.tipoPrueba) {
           return false;
         }
       }
@@ -492,6 +687,15 @@ const Filters = (function() {
     resetFilters,
     getFilteredRecords,
     normalizarNombre,
+    getTipoPrueba,
+    getAreaColumn,
+    getAreaLabel,
+    getAreaScore,
+    getEscala,
+    getNiveles,
+    getNivelLabels,
+    getNivelColors,
+    getNivelPorPuntaje,
     getDesempenoInfo,
     getCicloForGrade,
     getGroupsForGrade
