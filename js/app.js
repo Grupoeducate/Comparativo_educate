@@ -379,6 +379,31 @@ const App = (function() {
   }
 
   /**
+   * Deriva el Puntaje Global oficial de las filas Saber que llegaron sin PUNTAJE,
+   * aplicando la ponderación ICFES (Resolución 268 de 2020) sobre las áreas (0 a 100).
+   * Marca cada fila derivada con PUNTAJE_DERIVADO sin alterar las columnas originales.
+   * Se ejecuta una sola vez, justo después de cargar el consolidado y de inicializar
+   * Filters (que ya tiene la configuración de escalas).
+   */
+  function derivarPuntajesGlobales() {
+    let derivados = 0;
+    state.rawRecords.forEach(r => {
+      if (window.Filters.getTipoPrueba(r.PRUEBA) !== 'saber') return;
+      const actual = parseFloat(String(r.PUNTAJE || '').replace(',', '.'));
+      if (!isNaN(actual) && actual > 0) return;
+      const pg = window.Filters.calcularPuntajeGlobal(r);
+      if (pg !== null && !isNaN(pg)) {
+        r.PUNTAJE = String(pg);
+        r.PUNTAJE_DERIVADO = 'true';
+        derivados++;
+      }
+    });
+    if (derivados > 0) {
+      console.log(`[Educate 360°] Puntaje global derivado con la ponderación ICFES para ${derivados} registros Saber sin PUNTAJE.`);
+    }
+  }
+
+  /**
    * Inicializa la interfaz una vez validado el acceso
    */
   function bootApplication() {
@@ -386,6 +411,8 @@ const App = (function() {
       state.currentFilteredRecords = filteredRows;
       renderActiveModule();
     });
+
+    derivarPuntajesGlobales();
 
     state.currentFilteredRecords = window.Filters.getFilteredRecords();
     renderActiveModule();
@@ -586,18 +613,41 @@ const App = (function() {
     });
     container.innerHTML = '';
 
+    // Abreviaturas oficiales de las áreas para la fórmula de ponderación ICFES
+    const ABREVIATURAS_PONDERACION = {
+      'LECTURA CRÍTICA': 'LC',
+      'MATEMÁTICAS': 'MA',
+      'CIENCIAS NATURALES': 'CN',
+      'SOCIALES Y CIUDADANAS': 'SC',
+      'INGLÉS': 'IN'
+    };
+
     const tiposPresentes = (tipos || []).filter(t => t === 'periodica' || t === 'saber');
 
     tiposPresentes.forEach((tipo, idx) => {
       const escala = window.Filters.getEscala(tipo);
+      const escalaArea = window.Filters.getEscalaArea(tipo);
+      const pond = window.Filters.getPonderacion(tipo);
       const titulo = tipo === 'saber' ? 'Pruebas Saber' : 'Pruebas Periódicas';
+
+      // Texto de escalas: en Saber se muestran AMBAS (áreas 0–100 y puntaje global 0–500
+      // con su fórmula oficial); en periódicas área y puntaje comparten la escala 1 a 5.
+      let textoEscala;
+      if (pond) {
+        const formula = Object.entries(pond.pesos)
+          .map(([columna, peso]) => `${peso}·${ABREVIATURAS_PONDERACION[columna] || columna}`)
+          .join(' + ');
+        textoEscala = `Áreas ${escalaArea.minimo} a ${escalaArea.maximo} · Puntaje global ${escala.minimo} a ${escala.maximo} (${formula})/${pond.divisor} × ${pond.factor}`;
+      } else {
+        textoEscala = `Áreas y puntaje ${escalaArea.minimo} a ${escalaArea.maximo}`;
+      }
 
       const block = document.createElement('div');
       block.className = 'chart-block' + (idx > 0 ? ' with-divider' : '');
       block.innerHTML = `
         <div class="chart-block-header">
           <div class="chart-block-title">${titulo}</div>
-          <div class="chart-block-scale">Escala ${escala.minimo} a ${escala.maximo} · Niveles: ${window.Filters.getNivelLabels(tipo).join(', ')}</div>
+          <div class="chart-block-scale">${textoEscala} · Niveles: ${window.Filters.getNivelLabels(tipo).join(', ')}</div>
         </div>
         <div class="chart-container">
           <canvas id="${containerId}-${tipo}"></canvas>
@@ -694,6 +744,7 @@ const App = (function() {
       setText('kpi-mejor-area-score', '-');
       setText('kpi-area-critica-nombre', '-');
       setText('kpi-area-critica-score', '-');
+      setText('kpi-promedio-hint', 'Escalas mixtas: el promedio general no es comparable');
 
       const badgeEl = document.getElementById('kpi-promedio-badge');
       if (badgeEl) {
@@ -703,6 +754,9 @@ const App = (function() {
     } else {
       const tipo = tipos[0] || 'periodica';
       const escala = window.Filters.getEscala(tipo);
+      // Los KPI de mejor/crítica comparan ÁREAS: usan la escala de áreas (0–100 en Saber),
+      // mientras el promedio general usa la escala global del PUNTAJE (0–500 en Saber).
+      const escalaArea = window.Filters.getEscalaArea(tipo);
 
       const scores = records
         .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
@@ -715,20 +769,26 @@ const App = (function() {
       const areaAverages = computeAreaAverages(records, areasList, tipo);
 
       let bestArea = { name: 'N/A', avg: 0 };
-      let criticalArea = { name: 'N/A', avg: escala.maximo + 0.1 };
+      let criticalArea = { name: 'N/A', avg: escalaArea.maximo + 0.1 };
 
       Object.entries(areaAverages).forEach(([name, avg]) => {
         if (avg > bestArea.avg) bestArea = { name, avg };
         if (avg > 0 && avg < criticalArea.avg) criticalArea = { name, avg };
       });
 
-      if (criticalArea.avg > escala.maximo) criticalArea = { name: 'Ninguna', avg: 0 };
+      if (criticalArea.avg > escalaArea.maximo) criticalArea = { name: 'Ninguna', avg: 0 };
 
       setText('kpi-promedio-general', generalAverage > 0 ? generalAverage.toFixed(2) : '-');
       setText('kpi-mejor-area-nombre', window.Filters.getAreaLabel(bestArea.name, tipo));
-      setText('kpi-mejor-area-score', bestArea.avg > 0 ? `${bestArea.avg.toFixed(2)} / ${escala.maximo}` : '-');
+      setText('kpi-mejor-area-score', bestArea.avg > 0 ? `${bestArea.avg.toFixed(2)} / ${escalaArea.maximo}` : '-');
       setText('kpi-area-critica-nombre', window.Filters.getAreaLabel(criticalArea.name, tipo));
-      setText('kpi-area-critica-score', criticalArea.avg > 0 ? `${criticalArea.avg.toFixed(2)} / ${escala.maximo}` : '-');
+      setText('kpi-area-critica-score', criticalArea.avg > 0 ? `${criticalArea.avg.toFixed(2)} / ${escalaArea.maximo}` : '-');
+
+      // Aclaración del promedio general: en Saber es el Puntaje Global oficial ponderado
+      // (IG = (3·LC + 3·MA + 3·CN + 3·SC + 1·IN)/13, PG = IG×5), no el promedio simple de áreas.
+      setText('kpi-promedio-hint', tipo === 'saber'
+        ? 'Puntaje Global oficial ICFES (ponderado), no promedio simple de áreas'
+        : 'Promedio en escala de 1 a 5');
 
       // Nivel de desempeño del promedio según la escala oficial del tipo
       const genNivel = window.Filters.getNivelPorPuntaje(tipo, generalAverage);
@@ -748,13 +808,14 @@ const App = (function() {
       distributionPorTipo[tipo] = computeDistribution(recsTipo);
     });
 
-    // Promedio comparativo por área con valores numéricos sobre las barras
+    // Promedio comparativo por área con valores numéricos sobre las barras.
+    // Las áreas se grafican en su ESCALA DE ÁREAS (0–100 en Saber, 1–5 en periódicas).
     renderSplitCharts('split-chart-dashboard-areas', tipos, (canvasId, tipo, escala) => {
       window.Charts.renderExecutiveOverview(
         canvasId,
         areaAveragesPorTipo[tipo],
         distributionPorTipo[tipo],
-        { escala, niveles: window.Filters.getNiveles(tipo), etiquetas: getEtiquetasAreas(tipo) }
+        { escala: window.Filters.getEscalaArea(tipo), niveles: window.Filters.getNiveles(tipo), etiquetas: getEtiquetasAreas(tipo) }
       );
     });
 
@@ -954,6 +1015,31 @@ const App = (function() {
       });
 
       // Gráfico de línea interactivo (permite ocultar/mostrar líneas de área haciendo clic en la leyenda)
+      if (tipo === 'saber') {
+        // En Saber el puntaje global (0 a 500) y las áreas (0 a 100) no comparten escala:
+        // se dibujan dos curvas para no aplastar las líneas de área contra el eje global.
+        const canvasBase = document.getElementById(canvasId);
+        if (canvasBase && canvasBase.parentElement) {
+          const contenedorBase = canvasBase.parentElement;
+          const areasId = `${canvasId}-areas`;
+          contenedorBase.insertAdjacentHTML('beforebegin', '<div class="chart-block-scale">Puntaje global por prueba (0 a 500)</div>');
+          contenedorBase.insertAdjacentHTML('afterend', `<div class="chart-block-scale" style="margin-top:1rem;">Promedios por área (0 a 100)</div><div class="chart-container" style="min-height:280px;"><canvas id="${areasId}"></canvas></div>`);
+
+          window.Charts.renderEvolutionChart(canvasId, {
+            pruebas: pruebasTipo,
+            promedioGeneral: generalAverages
+          }, { escala, niveles: window.Filters.getNiveles(tipo) });
+
+          window.Charts.renderEvolutionChart(areasId, {
+            pruebas: pruebasTipo,
+            promedioGeneral: null,
+            areas: areasLabeled,
+            colores: coloresArea
+          }, { escala: window.Filters.getEscalaArea(tipo), niveles: window.Filters.getNiveles(tipo) });
+        }
+        return;
+      }
+
       window.Charts.renderEvolutionChart(canvasId, {
         pruebas: pruebasTipo,
         promedioGeneral: generalAverages,
@@ -987,14 +1073,16 @@ const App = (function() {
           }
         }
 
-        // Escala oficial de la prueba para que los puntajes sean interpretables
+        // Escala oficial de la prueba: puntaje global y escala de áreas, para que
+        // los promedios de la matriz sean interpretables en cada columna.
         const tipoPrueba = window.Filters.getTipoPrueba(p);
         const escalaPrueba = window.Filters.getEscala(tipoPrueba);
+        const escalaAreaPrueba = window.Filters.getEscalaArea(tipoPrueba);
 
         html += `
           <tr>
             <td><strong>Misión ${p}</strong></td>
-            <td>${escalaPrueba.etiqueta} ${escalaPrueba.minimo}–${escalaPrueba.maximo}</td>
+            <td>${escalaPrueba.etiqueta} ${escalaPrueba.minimo}–${escalaPrueba.maximo} · Áreas ${escalaAreaPrueba.minimo}–${escalaAreaPrueba.maximo}</td>
             <td>${pRecords.length}</td>
             <td class="score-cell">${currentAvg > 0 ? currentAvg.toFixed(2) : '-'}</td>
             <td>${deltaBadge}</td>
@@ -1011,6 +1099,7 @@ const App = (function() {
 
     // Requerimiento 8: Gráfica vertical con nombre "Comparativo por grado y grupo"
     // Separada por escala para no mezclar puntajes 1-5 con puntajes 0-500 en un mismo eje.
+    // Las barras son promedios de ÁREAS: se pasa la escala de áreas (0–100 en Saber).
     renderSplitCharts('split-chart-evolucion-grupos', tipos, (canvasId, tipo, escala) => {
       const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
       if (recsTipo.length === 0) return;
@@ -1018,7 +1107,7 @@ const App = (function() {
         canvasId,
         recsTipo,
         getAreasResueltas(tipo),
-        { escala }
+        { escala: window.Filters.getEscalaArea(tipo) }
       );
     });
   }
@@ -1141,8 +1230,9 @@ const App = (function() {
     if (compGrid) {
       let compHtml = '';
       tiposArea.forEach(tipo => {
-        const escala = window.Filters.getEscala(tipo);
-        const maximo = escala.maximo;
+        // Las áreas se presentan en la ESCALA DE ÁREAS (0–100 en Saber, 1–5 en periódicas)
+        const escalaArea = window.Filters.getEscalaArea(tipo);
+        const maximo = escalaArea.maximo;
         const datos = datosPorTipo[tipo];
         const areaLabel = window.Filters.getAreaLabel(currentAreaCfg.nombre, tipo);
         const tituloGeneral = tiposArea.length > 1
@@ -1196,9 +1286,11 @@ const App = (function() {
       const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
       if (recsTipo.length === 0) return;
       const areaLabel = window.Filters.getAreaLabel(currentAreaCfg.nombre, tipo);
+      // Los puntajes graficados son de ÁREA/componentes: se pasa la escala de áreas
+      const escalaArea = window.Filters.getEscalaArea(tipo);
       if (isAllGrades) {
         window.Charts.renderAreaAllGradesGroupsChart(canvasId, currentAreaCfg.nombre, recsTipo, {
-          escala,
+          escala: escalaArea,
           areaLabel,
           col: window.Filters.getAreaColumn(currentAreaCfg.nombre, tipo)
         });
@@ -1208,7 +1300,7 @@ const App = (function() {
           areaLabel,
           datosPorTipo[tipo].areaAvg,
           datosPorTipo[tipo].componentsData,
-          { escala }
+          { escala: escalaArea }
         );
       }
     });
@@ -1558,11 +1650,12 @@ const App = (function() {
       window.Charts.renderStudentHistory(canvasId, studentTestsData, { escala });
     });
 
-    // Requerimiento 9: Comparativa de desempeño en cada área por escala
+    // Requerimiento 9: Comparativa de desempeño en cada área por escala.
+    // Las barras son puntajes de ÁREA: se pasa la escala de áreas (0–100 en Saber).
     renderSplitCharts('split-chart-student-areas', tiposStudent, (canvasId, tipo, escala) => {
       const testsTipo = tests.filter(t => window.Filters.getTipoPrueba(t.PRUEBA) === tipo);
       if (testsTipo.length === 0) return;
-      window.Charts.renderStudentAreasComparison(canvasId, testsTipo, getAreasResueltas(tipo), { escala });
+      window.Charts.renderStudentAreasComparison(canvasId, testsTipo, getAreasResueltas(tipo), { escala: window.Filters.getEscalaArea(tipo) });
     });
 
     const modalBackdrop = document.getElementById('student-modal-backdrop');

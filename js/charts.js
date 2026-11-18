@@ -297,18 +297,20 @@ const Charts = (function() {
     // Solo se grafican las pruebas presentes en el consolidado de la institución
     const pruebas = evolutionData.pruebas || [];
     if (pruebas.length === 0) return;
-    const datasets = [
-      {
+    const datasets = [];
+    // promedioGeneral en null indica una gráfica solo de áreas (escalas distintas en Saber)
+    if (evolutionData.promedioGeneral) {
+      datasets.push({
         label: 'Promedio General',
-        data: evolutionData.promedioGeneral || [],
+        data: evolutionData.promedioGeneral,
         borderColor: '#0f172a',
         backgroundColor: '#0f172a',
         borderWidth: 3,
         pointRadius: 6,
         pointHoverRadius: 8,
         tension: 0.2
-      }
-    ];
+      });
+    }
 
     if (evolutionData.areas) {
       Object.entries(evolutionData.areas).forEach(([areaName, scores]) => {
@@ -399,6 +401,7 @@ const Charts = (function() {
    * Comparativo Vertical por Grado y Grupo (Requerimiento 8).
    * Las áreas llegan resueltas por el llamador: [{ key, label, col }],
    * con la columna y la etiqueta propias de la escala de los registros.
+   * options.escala es la ESCALA DE ÁREAS (los valores graficados son promedios de áreas).
    */
   function renderGradeGroupComparison(canvasId, records, areas, options) {
     destroyChart(canvasId);
@@ -494,8 +497,9 @@ const Charts = (function() {
 
   /**
    * Comparativa de componentes de un área. La etiqueta del área, el promedio
-   * y los componentes llegan ya resueltos desde el llamador; la escala define
-   * el rango del eje (1-5 en periódicas, 0-500 en Saber).
+   * y los componentes llegan ya resueltos desde el llamador; options.escala es
+   * la ESCALA DE ÁREAS pasada por el llamador (1–5 en periódicas, 0–100 en Saber)
+   * y define el rango del eje.
    */
   function renderAreaComponentsChart(canvasId, areaName, mainAverage, componentsData, options) {
     destroyChart(canvasId);
@@ -1044,7 +1048,8 @@ const Charts = (function() {
   /**
    * Comparativo por Área en las 3 pruebas para la Ficha del Estudiante (Requerimiento 9).
    * Las áreas llegan resueltas por el llamador: [{ key, label, col }], con la columna
-   * y la etiqueta propias de la escala de las pruebas incluidas.
+   * y la etiqueta propias de la escala de las pruebas incluidas. options.escala es
+   * la ESCALA DE ÁREAS (1–5 en periódicas, 0–100 en Saber).
    */
   function renderStudentAreasComparison(canvasId, studentTests, areas, options) {
     destroyChart(canvasId);
