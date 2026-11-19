@@ -90,6 +90,11 @@ body {
   flex-shrink: 0;
   transition: width var(--transition-normal);
   z-index: 40;
+  /* Accesibilidad: el menú permanece visible al hacer scroll en contenido largo */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .sidebar-header {
@@ -1445,6 +1450,10 @@ body {
   
   .sidebar {
     width: 100%;
+    /* En pantallas angostas el menú fluye con el contenido en vez de ocupar el alto completo */
+    position: static;
+    height: auto;
+    overflow-y: visible;
   }
   
   .nav-menu {

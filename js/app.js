@@ -1066,13 +1066,21 @@ const App = (function() {
     }
     if (tbody && pruebas.length > 0) {
       let html = '';
+      let tipoPruebaAnterior = null;
       pruebas.forEach((p, idx) => {
         const pRecords = records.filter(r => String(r.PRUEBA).toUpperCase() === p);
         const prevAvg = idx > 0 ? generalAverages[idx - 1] : null;
         const currentAvg = generalAverages[idx];
         let deltaBadge = '<span class="evolution-delta-badge delta-neutral">-</span>';
 
-        if (prevAvg !== null && prevAvg > 0 && currentAvg > 0) {
+        // La variación solo es comparable dentro de la misma escala: pruebas del
+        // mismo tipo (periódica 1-5 o Saber 0-500) se califican distinto, así que
+        // entre tipos no se calcula delta.
+        const tipoActual = window.Filters.getTipoPrueba(p);
+        const mismoTipo = tipoPruebaAnterior !== null && tipoActual === tipoPruebaAnterior;
+        tipoPruebaAnterior = tipoActual;
+
+        if (mismoTipo && prevAvg !== null && prevAvg > 0 && currentAvg > 0) {
           const diff = currentAvg - prevAvg;
           if (diff > 0) {
             deltaBadge = `<span class="evolution-delta-badge delta-positive">+${diff.toFixed(2)}</span>`;
