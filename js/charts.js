@@ -30,13 +30,68 @@ const Charts = (function() {
     'Ingles': '#db2777'
   };
 
-  const AREA_COLUMNS = {
-    'Lenguaje': 'LENGUAJE',
-    'Matematicas': 'MATEMÁTICAS',
-    'Ciencias Naturales': 'CIENCIAS NATURALES',
-    'Sociales': 'SOCIALES Y CIUDADANAS',
-    'Ingles': 'INGLÉS'
-  };
+  /**
+   * Paso "redondeado" apropiado para un rango del eje. Conserva 0.5 para las
+   * escalas periódicas (1 a 5) y produce pasos legibles para escalas amplias
+   * como Saber (0 a 500).
+   */
+  function niceStepSize(rango) {
+    if (rango <= 4) return 0.5;
+    if (rango <= 10) return 1;
+    const bruto = rango / 8;
+    const magnitud = Math.pow(10, Math.floor(Math.log10(bruto)));
+    const candidatos = [1, 2, 2.5, 5, 10].map(m => m * magnitud);
+    return candidatos.find(c => c >= bruto) || 10 * magnitud;
+  }
+
+  /**
+   * Resuelve la escala desde las opciones recibidas por cada gráfica.
+   * Cuando no se reciben opciones (instituciones con una sola escala periódica)
+   * se conservan los valores históricos 1.0 a 5.0, de modo que nada se ve peor que antes.
+   */
+  function resolveEscala(options) {
+    const esc = (options && options.escala) || {};
+    const minimo = (esc.minimo !== undefined && !isNaN(Number(esc.minimo))) ? Number(esc.minimo) : 1;
+    const maximo = (esc.maximo !== undefined && !isNaN(Number(esc.maximo))) ? Number(esc.maximo) : 5;
+    const rango = maximo - minimo;
+    return {
+      minimo,
+      maximo,
+      // Techo del eje: pequeño margen sobre el máximo oficial en escalas cortas
+      // para que las etiquetas numéricas no queden recortadas.
+      techo: rango <= 10 ? Number((maximo + rango * 0.075).toFixed(2)) : maximo,
+      stepSize: niceStepSize(rango)
+    };
+  }
+
+  /**
+   * Rango del eje de puntajes a partir de las series realmente dibujadas.
+   * Mantiene el rango institucional habitual (0-5) y solo lo amplía cuando el
+   * consolidado usa otra escala (por ejemplo puntajes 0-500), evitando gráficas recortadas.
+   */
+  function scoreAxisBounds(seriesList, fixedMin, fixedMax) {
+    const values = [];
+    (seriesList || []).forEach(series => {
+      (series || []).forEach(value => {
+        const num = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
+        if (!isNaN(num) && num > 0) values.push(num);
+      });
+    });
+
+    const paso = niceStepSize(fixedMax - fixedMin);
+    if (values.length === 0) return { min: fixedMin, max: fixedMax, stepSize: paso };
+
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    if (dataMin >= fixedMin && dataMax <= fixedMax) {
+      return { min: fixedMin, max: fixedMax, stepSize: paso };
+    }
+
+    const min = Math.max(0, Math.floor(dataMin));
+    let max = Math.ceil(dataMax);
+    if (max - min < 1) max = min + 1;
+    return { min, max, stepSize: Math.max(0.5, Math.round((max - min) / 8)) };
+  }
 
   /**
    * Destruye una instancia previa si existe para evitar superposiciones
@@ -85,27 +140,32 @@ const Charts = (function() {
   // 1. Dashboard Ejecutivo: Gráficos de Resumen
   // ==========================================================================
 
-  function renderExecutiveOverview(canvasId, areaAverages, performanceDistribution) {
+  function renderExecutiveOverview(canvasId, areaAverages, performanceDistribution, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
+    const escala = resolveEscala(options);
+
     if (!isChartJsAvailable()) {
-      renderSvgBarChart(canvas, areaAverages);
+      renderSvgBarChart(canvas, areaAverages, escala.maximo);
       return;
     }
 
     const ctx = canvas.getContext('2d');
-    const labels = Object.keys(areaAverages);
+    // Etiquetas visibles resueltas por el llamador (por ejemplo "Lectura Crítica" en Saber)
+    const etiquetas = (options && options.etiquetas) || null;
+    const claves = Object.keys(areaAverages);
+    const labels = claves.map(clave => (etiquetas && etiquetas[clave]) || clave);
     const data = Object.values(areaAverages);
-    const backgroundColors = labels.map(label => AREA_COLORS[label] || COLORS.primary);
+    const backgroundColors = claves.map(clave => AREA_COLORS[clave] || COLORS.primary);
 
     chartInstances[canvasId] = new Chart(ctx, {
       type: 'bar',
       data: {
         labels: labels,
         datasets: [{
-          label: 'Promedio Institucional (1.0 - 5.0)',
+          label: `Promedio Institucional (${escala.minimo} - ${escala.maximo})`,
           data: data,
           backgroundColor: backgroundColors,
           borderRadius: 6,
@@ -119,21 +179,21 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (context) => `Promedio: ${context.raw.toFixed(2)} / 5.0`
+              label: (context) => `Promedio: ${context.raw.toFixed(2)} / ${escala.maximo}`
             }
           }
         },
         scales: {
           y: {
             beginAtZero: false,
-            min: 1.0,
-            max: 5.35,
-            suggestedMax: 5.35,
+            min: escala.minimo,
+            max: escala.techo,
+            suggestedMax: escala.techo,
             grid: { color: '#f1f5f9' },
             ticks: {
-              stepSize: 0.5,
+              stepSize: escala.stepSize,
               font: { weight: '600' },
-              callback: (val) => val <= 5.0 ? val : ''
+              callback: (val) => val <= escala.maximo ? val : ''
             }
           },
           x: {
@@ -163,10 +223,17 @@ const Charts = (function() {
     });
   }
 
-  function renderExecutiveDonut(canvasId, distribution) {
+  function renderExecutiveDonut(canvasId, distribution, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
+
+    // Etiquetas y colores oficiales según la escala del tipo de prueba
+    const niveles = (options && Array.isArray(options.niveles) && options.niveles.length === 4)
+      ? options.niveles
+      : null;
+    const nivelLabels = niveles ? niveles.map(n => n.label) : ['Bajo', 'Básico', 'Alto', 'Superior'];
+    const nivelColors = niveles ? niveles.map(n => n.color) : [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior];
 
     const data = [
       distribution.Bajo || 0,
@@ -176,7 +243,7 @@ const Charts = (function() {
     ];
 
     if (!isChartJsAvailable()) {
-      renderSvgDonut(canvas, data);
+      renderSvgDonut(canvas, data, nivelLabels, nivelColors);
       return;
     }
 
@@ -184,10 +251,10 @@ const Charts = (function() {
     chartInstances[canvasId] = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: ['Bajo', 'Básico', 'Alto', 'Superior'],
+        labels: nivelLabels,
         datasets: [{
           data: data,
-          backgroundColor: [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior],
+          backgroundColor: nivelColors,
           borderWidth: 2,
           borderColor: '#ffffff',
           hoverOffset: 6
@@ -220,32 +287,42 @@ const Charts = (function() {
   // 2. Evolución Institucional (Alpha -> Beta -> Gamma)
   // ==========================================================================
 
-  function renderEvolutionChart(canvasId, evolutionData) {
+  function renderEvolutionChart(canvasId, evolutionData, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const pruebas = evolutionData.pruebas || ['ALFA', 'BETA', 'GAMMA'];
-    const datasets = [
-      {
+    const escala = resolveEscala(options);
+
+    // Solo se grafican las pruebas presentes en el consolidado de la institución
+    const pruebas = evolutionData.pruebas || [];
+    if (pruebas.length === 0) return;
+    const datasets = [];
+    // promedioGeneral en null indica una gráfica solo de áreas (escalas distintas en Saber)
+    if (evolutionData.promedioGeneral) {
+      datasets.push({
         label: 'Promedio General',
-        data: evolutionData.promedioGeneral || [],
+        data: evolutionData.promedioGeneral,
         borderColor: '#0f172a',
         backgroundColor: '#0f172a',
         borderWidth: 3,
         pointRadius: 6,
         pointHoverRadius: 8,
         tension: 0.2
-      }
-    ];
+      });
+    }
 
     if (evolutionData.areas) {
       Object.entries(evolutionData.areas).forEach(([areaName, scores]) => {
+        // Color resuelto por el llamador (la etiqueta puede diferir de la clave interna)
+        const color = (evolutionData.colores && evolutionData.colores[areaName])
+          || AREA_COLORS[areaName]
+          || COLORS.primary;
         datasets.push({
           label: areaName,
           data: scores,
-          borderColor: AREA_COLORS[areaName] || COLORS.primary,
-          backgroundColor: AREA_COLORS[areaName] || COLORS.primary,
+          borderColor: color,
+          backgroundColor: color,
           borderWidth: 2,
           pointRadius: 5,
           tension: 0.2,
@@ -258,6 +335,12 @@ const Charts = (function() {
       renderSvgLineChart(canvas, pruebas, datasets);
       return;
     }
+
+    const generalAxis = scoreAxisBounds(
+      datasets.map(ds => ds.data),
+      escala.minimo,
+      escala.maximo
+    );
 
     const ctx = canvas.getContext('2d');
     chartInstances[canvasId] = new Chart(ctx, {
@@ -300,10 +383,10 @@ const Charts = (function() {
         },
         scales: {
           y: {
-            min: 2.0,
-            max: 5.0,
+            min: generalAxis.min,
+            max: generalAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: generalAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { color: '#f1f5f9' },
@@ -315,14 +398,18 @@ const Charts = (function() {
   }
 
   /**
-   * Comparativo Vertical por Grado y Grupo (Requerimiento 8)
+   * Comparativo Vertical por Grado y Grupo (Requerimiento 8).
+   * Las áreas llegan resueltas por el llamador: [{ key, label, col }],
+   * con la columna y la etiqueta propias de la escala de los registros.
+   * options.escala es la ESCALA DE ÁREAS (los valores graficados son promedios de áreas).
    */
-  function renderGradeGroupComparison(canvasId, records, areasList) {
+  function renderGradeGroupComparison(canvasId, records, areas, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const listAreas = areasList || ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
+    const escala = resolveEscala(options);
+    const listAreas = areas || [];
 
     // Agrupar registros por Grado y Grupo
     const mapGroups = {};
@@ -346,8 +433,8 @@ const Charts = (function() {
 
     if (sortedKeys.length === 0) return;
 
-    const datasets = listAreas.map(areaName => {
-      const col = AREA_COLUMNS[areaName] || areaName.toUpperCase();
+    const datasets = listAreas.map(item => {
+      const col = item.col || item.key.toUpperCase();
       const data = sortedKeys.map(k => {
         const rows = mapGroups[k].rows;
         const vals = rows.map(r => parseFloat(String(r[col] || '').replace(',', '.'))).filter(v => !isNaN(v));
@@ -355,15 +442,15 @@ const Charts = (function() {
       });
 
       return {
-        label: areaName,
+        label: item.label || item.key,
         data: data,
-        backgroundColor: AREA_COLORS[areaName] || COLORS.primary,
+        backgroundColor: AREA_COLORS[item.key] || COLORS.primary,
         borderRadius: 4
       };
     });
 
     if (!isChartJsAvailable()) {
-      renderSvgHorizontalBar(canvas, sortedKeys, datasets[0].data, datasets.map(() => COLORS.primary));
+      renderSvgHorizontalBar(canvas, sortedKeys, datasets[0].data, datasets.map(() => COLORS.primary), escala.maximo);
       return;
     }
 
@@ -384,16 +471,16 @@ const Charts = (function() {
           },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} / ${escala.maximo}`
             }
           }
         },
         scales: {
           y: {
-            min: 1.0,
-            max: 5.2,
+            min: escala.minimo,
+            max: escala.techo,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: escala.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { display: false },
@@ -408,11 +495,18 @@ const Charts = (function() {
   // 4. Seguimiento por Área y Componentes
   // ==========================================================================
 
-  function renderAreaComponentsChart(canvasId, areaName, mainAverage, componentsData) {
+  /**
+   * Comparativa de componentes de un área. La etiqueta del área, el promedio
+   * y los componentes llegan ya resueltos desde el llamador; options.escala es
+   * la ESCALA DE ÁREAS pasada por el llamador (1–5 en periódicas, 0–100 en Saber)
+   * y define el rango del eje.
+   */
+  function renderAreaComponentsChart(canvasId, areaName, mainAverage, componentsData, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
+    const escala = resolveEscala(options);
     const labels = [areaName, ...Object.keys(componentsData)];
     const values = [mainAverage, ...Object.values(componentsData)];
     const bgColors = [
@@ -421,7 +515,7 @@ const Charts = (function() {
     ];
 
     if (!isChartJsAvailable()) {
-      renderSvgHorizontalBar(canvas, labels, values, bgColors);
+      renderSvgHorizontalBar(canvas, labels, values, bgColors, escala.maximo);
       return;
     }
 
@@ -446,15 +540,15 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` Calificación: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` Calificación: ${ctx.raw.toFixed(2)} / ${escala.maximo}`
             }
           }
         },
         scales: {
           x: {
-            min: 1.0,
-            max: 5.2,
-            ticks: { stepSize: 0.5, font: { weight: '600' } },
+            min: escala.minimo,
+            max: escala.techo,
+            ticks: { stepSize: escala.stepSize, font: { weight: '600' } },
             grid: { color: '#f1f5f9' }
           },
           y: {
@@ -485,14 +579,18 @@ const Charts = (function() {
   }
 
   /**
-   * Muestra para un área el promedio de cada grado y de cada grupo cuando 'todos' está seleccionado (Requerimiento 10)
+   * Muestra para un área el promedio de cada grado y de cada grupo cuando 'todos' está
+   * seleccionado (Requerimiento 10). La columna del CSV, la etiqueta visible y la escala
+   * llegan resueltas desde el llamador en options ({ escala, areaLabel, col }).
    */
-  function renderAreaAllGradesGroupsChart(canvasId, areaName, records) {
+  function renderAreaAllGradesGroupsChart(canvasId, areaName, records, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const col = AREA_COLUMNS[areaName] || areaName.toUpperCase();
+    const escala = resolveEscala(options);
+    const col = (options && options.col) || areaName.toUpperCase();
+    const areaLabel = (options && options.areaLabel) || areaName;
 
     // 1. Promedio por Grado
     const gradesMap = {};
@@ -540,7 +638,7 @@ const Charts = (function() {
     ];
 
     if (!isChartJsAvailable()) {
-      renderSvgHorizontalBar(canvas, labels, values, colors);
+      renderSvgHorizontalBar(canvas, labels, values, colors, escala.maximo);
       return;
     }
 
@@ -550,7 +648,7 @@ const Charts = (function() {
       data: {
         labels: labels,
         datasets: [{
-          label: `Promedio en ${areaName}`,
+          label: `Promedio en ${areaLabel}`,
           data: values,
           backgroundColor: colors,
           borderRadius: 4
@@ -564,15 +662,15 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` Promedio: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` Promedio: ${ctx.raw.toFixed(2)} / ${escala.maximo}`
             }
           }
         },
         scales: {
           x: {
-            min: 1.0,
-            max: 5.2,
-            ticks: { stepSize: 0.5, font: { weight: '600' } },
+            min: escala.minimo,
+            max: escala.techo,
+            ticks: { stepSize: escala.stepSize, font: { weight: '600' } },
             grid: { color: '#f1f5f9' }
           },
           y: {
@@ -606,13 +704,20 @@ const Charts = (function() {
   // 5. Distribución de Desempeños: Barras Apiladas (100% Stacked Bar)
   // ==========================================================================
 
-  function renderStackedPerformance(canvasId, categories, bajoArr, basicoArr, altoArr, superiorArr) {
+  function renderStackedPerformance(canvasId, categories, bajoArr, basicoArr, altoArr, superiorArr, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
+    // Etiquetas y colores oficiales según la escala del tipo de prueba
+    const niveles = (options && Array.isArray(options.niveles) && options.niveles.length === 4)
+      ? options.niveles
+      : null;
+    const nivelLabels = niveles ? niveles.map(n => n.label) : ['Bajo', 'Básico', 'Alto', 'Superior'];
+    const nivelColors = niveles ? niveles.map(n => n.color) : [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior];
+
     if (!isChartJsAvailable()) {
-      renderSvgStackedBar(canvas, categories, bajoArr, basicoArr, altoArr, superiorArr);
+      renderSvgStackedBar(canvas, categories, bajoArr, basicoArr, altoArr, superiorArr, nivelLabels, nivelColors);
       return;
     }
 
@@ -623,30 +728,30 @@ const Charts = (function() {
         labels: categories,
         datasets: [
           {
-            label: 'Bajo',
+            label: nivelLabels[0],
             data: bajoArr,
-            backgroundColor: COLORS.bajo,
+            backgroundColor: nivelColors[0],
             stack: 'desempeno',
             borderRadius: 2
           },
           {
-            label: 'Básico',
+            label: nivelLabels[1],
             data: basicoArr,
-            backgroundColor: COLORS.basico,
+            backgroundColor: nivelColors[1],
             stack: 'desempeno',
             borderRadius: 2
           },
           {
-            label: 'Alto',
+            label: nivelLabels[2],
             data: altoArr,
-            backgroundColor: COLORS.alto,
+            backgroundColor: nivelColors[2],
             stack: 'desempeno',
             borderRadius: 2
           },
           {
-            label: 'Superior',
+            label: nivelLabels[3],
             data: superiorArr,
-            backgroundColor: COLORS.superior,
+            backgroundColor: nivelColors[3],
             stack: 'desempeno',
             borderRadius: 2
           }
@@ -691,20 +796,30 @@ const Charts = (function() {
   // 6. Consulta por Ciclo: Comparativo Inter-ciclos
   // ==========================================================================
 
-  function renderCyclesComparison(canvasId, cyclesData) {
+  /**
+   * Comparativo Inter-ciclos. La escala llega en options ({ escala }) desde el
+   * llamador: define el rango del eje (1-5 en periódicas, 0-500 en Saber).
+   * Sin options se conservan los valores históricos 2.0 a 5.3.
+   */
+  function renderCyclesComparison(canvasId, cyclesData, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
+    const escala = resolveEscala(options);
     const labels = Object.keys(cyclesData);
     const values = Object.values(cyclesData).map(d => d.promedio || 0);
     const counts = Object.values(cyclesData).map(d => d.totalEstudiantes || 0);
 
     if (!isChartJsAvailable()) {
-      renderSvgBarChart(canvas, Object.fromEntries(labels.map((l, i) => [l, values[i]])));
+      renderSvgBarChart(canvas, Object.fromEntries(labels.map((l, i) => [l, values[i]])), escala.maximo);
       return;
     }
 
+    const tieneEscala = options && options.escala && !isNaN(Number(options.escala.maximo));
+    const cyclesAxis = tieneEscala
+      ? scoreAxisBounds([values], escala.minimo, escala.techo)
+      : { min: 2.0, max: 5.3, stepSize: 0.5 };
     const ctx = canvas.getContext('2d');
     chartInstances[canvasId] = new Chart(ctx, {
       type: 'bar',
@@ -731,10 +846,10 @@ const Charts = (function() {
         },
         scales: {
           y: {
-            min: 2.0,
-            max: 5.3,
+            min: cyclesAxis.min,
+            max: cyclesAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: cyclesAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { display: false },
@@ -764,9 +879,11 @@ const Charts = (function() {
   }
 
   /**
-   * Desglose de todos los grupos y grados por ciclo cuando se selecciona 'todos' (Requerimiento 11)
+   * Desglose de todos los grupos y grados por ciclo cuando se selecciona 'todos' (Requerimiento 11).
+   * La escala llega en options ({ escala }) desde el llamador y define el eje y el
+   * máximo mostrado en el tooltip; sin options se conservan los valores históricos 1.0 a 5.2.
    */
-  function renderCyclesDrilldown(canvasId, records, ciclosConfig) {
+  function renderCyclesDrilldown(canvasId, records, ciclosConfig, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -807,8 +924,17 @@ const Charts = (function() {
 
     if (labels.length === 0) return;
 
+    const escala = resolveEscala(options);
+    const tieneEscala = options && options.escala && !isNaN(Number(options.escala.maximo));
+    const drilldownAxis = tieneEscala
+      ? scoreAxisBounds([values], escala.minimo, escala.techo)
+      : { min: 1.0, max: 5.2, stepSize: 0.5 };
+    // Máximo oficial de la escala para el tooltip: 5.0 en periódicas, 500 en Saber
+    const maximoTooltip = tieneEscala ? escala.maximo : 5.0;
+    const textoMaximo = Number.isInteger(maximoTooltip) ? String(maximoTooltip) : maximoTooltip.toFixed(1);
+
     if (!isChartJsAvailable()) {
-      renderSvgHorizontalBar(canvas, labels, values, colors);
+      renderSvgHorizontalBar(canvas, labels, values, colors, escala.maximo);
       return;
     }
 
@@ -831,16 +957,16 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` Promedio: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` Promedio: ${ctx.raw.toFixed(2)} / ${textoMaximo}`
             }
           }
         },
         scales: {
           y: {
-            min: 1.0,
-            max: 5.2,
+            min: drilldownAxis.min,
+            max: drilldownAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: drilldownAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { display: false },
@@ -855,10 +981,15 @@ const Charts = (function() {
   // 7. Trazabilidad de Estudiantes: Trayectoria Individual y Comparativo por Área
   // ==========================================================================
 
-  function renderStudentHistory(canvasId, studentTests) {
+  function renderStudentHistory(canvasId, studentTests, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
+
+    // Escala del tipo de prueba de esta trayectoria; conserva 1.0/5.2 como respaldo
+    const escala = (options && options.escala && !isNaN(Number(options.escala.maximo)))
+      ? { minimo: Number(options.escala.minimo), maximo: Number(options.escala.maximo) }
+      : { minimo: 1.0, maximo: 5.2 };
 
     const labels = studentTests.map(t => `Misión ${t.prueba || t.PRUEBA}`);
     const globalScores = studentTests.map(t => parseFloat(String(t.puntaje || t.PUNTAJE).replace(',', '.')) || 0);
@@ -867,6 +998,8 @@ const Charts = (function() {
       renderSvgLineChart(canvas, labels, [{ label: 'Puntaje Global', data: globalScores, borderColor: '#0284c7' }]);
       return;
     }
+
+    const historyAxis = scoreAxisBounds([globalScores], escala.minimo, escala.maximo);
 
     const ctx = canvas.getContext('2d');
     chartInstances[canvasId] = new Chart(ctx, {
@@ -892,16 +1025,16 @@ const Charts = (function() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` Puntaje Global: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` Puntaje Global: ${ctx.raw.toFixed(2)}`
             }
           }
         },
         scales: {
           y: {
-            min: 1.0,
-            max: 5.2,
+            min: historyAxis.min,
+            max: historyAxis.max,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: historyAxis.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { color: '#f1f5f9' },
@@ -913,26 +1046,35 @@ const Charts = (function() {
   }
 
   /**
-   * Comparativo por Área en las 3 pruebas para la Ficha del Estudiante (Requerimiento 9)
+   * Comparativo por Área en las 3 pruebas para la Ficha del Estudiante (Requerimiento 9).
+   * Las áreas llegan resueltas por el llamador: [{ key, label, col }], con la columna
+   * y la etiqueta propias de la escala de las pruebas incluidas. options.escala es
+   * la ESCALA DE ÁREAS (1–5 en periódicas, 0–100 en Saber).
    */
-  function renderStudentAreasComparison(canvasId, studentTests, areasList) {
+  function renderStudentAreasComparison(canvasId, studentTests, areas, options) {
     destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const listAreas = areasList || ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
+    const escala = resolveEscala(options);
+
+    const listAreas = areas || [];
     const testColors = {
       'ALFA': '#0284c7',
       'BETA': '#4f46e5',
       'GAMMA': '#059669'
     };
+    // Paleta para pruebas que no están en config/pruebas.json (por ejemplo EPSILON)
+    const extraColors = ['#0d9488', '#b45309', '#7c3aed', '#be123c', '#0891b2'];
 
-    const datasets = studentTests.map(t => {
+    const labelsAreas = listAreas.map(item => item.label || item.key);
+
+    const datasets = studentTests.map((t, testIndex) => {
       const p = String(t.PRUEBA || t.prueba).toUpperCase();
-      const color = testColors[p] || '#64748b';
-      const data = listAreas.map(a => {
-        const col = AREA_COLUMNS[a] || a.toUpperCase();
-        const val = parseFloat(String(t[col] || t[a] || '').replace(',', '.'));
+      const color = testColors[p] || extraColors[testIndex % extraColors.length];
+      const data = listAreas.map(item => {
+        const col = item.col || item.key.toUpperCase();
+        const val = parseFloat(String(t[col] || t[item.key] || '').replace(',', '.'));
         return !isNaN(val) ? val : 0;
       });
 
@@ -945,7 +1087,7 @@ const Charts = (function() {
     });
 
     if (!isChartJsAvailable()) {
-      renderSvgHorizontalBar(canvas, listAreas, datasets[0] ? datasets[0].data : [], listAreas.map(() => '#0284c7'));
+      renderSvgHorizontalBar(canvas, labelsAreas, datasets[0] ? datasets[0].data : [], listAreas.map(() => '#0284c7'), escala.maximo);
       return;
     }
 
@@ -953,7 +1095,7 @@ const Charts = (function() {
     chartInstances[canvasId] = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: listAreas,
+        labels: labelsAreas,
         datasets: datasets
       },
       options: {
@@ -966,16 +1108,16 @@ const Charts = (function() {
           },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} / 5.0`
+              label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} / ${escala.maximo}`
             }
           }
         },
         scales: {
           y: {
-            min: 1.0,
-            max: 5.3,
+            min: escala.minimo,
+            max: escala.techo,
             grid: { color: '#f1f5f9' },
-            ticks: { stepSize: 0.5, font: { weight: '600' } }
+            ticks: { stepSize: escala.stepSize, font: { weight: '600' } }
           },
           x: {
             grid: { display: false },
@@ -1011,14 +1153,15 @@ const Charts = (function() {
   // Gráficos de Respaldo Puros en SVG (Garantizan visualización sin red / offline)
   // ==========================================================================
 
-  function renderSvgBarChart(canvas, dataObj) {
+  function renderSvgBarChart(canvas, dataObj, maximoReferencia) {
+    const maximo = (maximoReferencia && maximoReferencia > 0) ? maximoReferencia : 5.0;
     const container = getFallbackContainer(canvas);
     const entries = Object.entries(dataObj);
     if (entries.length === 0) return;
 
     let html = `<div style="display:flex; flex-direction:column; gap:8px; width:100%; padding:10px 0;">`;
     entries.forEach(([label, val]) => {
-      const pct = Math.min(Math.max((val / 5.0) * 100, 0), 100);
+      const pct = Math.min(Math.max((val / maximo) * 100, 0), 100);
       const color = AREA_COLORS[label] || COLORS.primary;
       html += `
         <div style="display:flex; align-items:center; gap:10px; font-size:12px;">
@@ -1033,12 +1176,13 @@ const Charts = (function() {
     container.innerHTML = html;
   }
 
-  function renderSvgHorizontalBar(canvas, labels, values, bgColors) {
+  function renderSvgHorizontalBar(canvas, labels, values, bgColors, maximoReferencia) {
+    const maximo = (maximoReferencia && maximoReferencia > 0) ? maximoReferencia : 5.0;
     const container = getFallbackContainer(canvas);
     let html = `<div style="display:flex; flex-direction:column; gap:8px; width:100%; padding:10px 0;">`;
     labels.forEach((label, i) => {
       const val = values[i] || 0;
-      const pct = Math.min(Math.max((val / 5.0) * 100, 0), 100);
+      const pct = Math.min(Math.max((val / maximo) * 100, 0), 100);
       const color = bgColors[i] || '#64748b';
       html += `
         <div style="display:flex; align-items:center; gap:10px; font-size:12px;">
@@ -1053,11 +1197,11 @@ const Charts = (function() {
     container.innerHTML = html;
   }
 
-  function renderSvgDonut(canvas, data) {
+  function renderSvgDonut(canvas, data, nivelLabels, nivelColors) {
     const container = getFallbackContainer(canvas);
     const total = data.reduce((a, b) => a + b, 0) || 1;
-    const labels = ['Bajo', 'Básico', 'Alto', 'Superior'];
-    const colors = [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior];
+    const labels = Array.isArray(nivelLabels) ? nivelLabels : ['Bajo', 'Básico', 'Alto', 'Superior'];
+    const colors = Array.isArray(nivelColors) ? nivelColors : [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior];
 
     let html = `<div style="display:flex; flex-direction:column; gap:8px; width:100%; padding:10px 0;">`;
     labels.forEach((lbl, i) => {
@@ -1095,8 +1239,10 @@ const Charts = (function() {
     container.innerHTML = html;
   }
 
-  function renderSvgStackedBar(canvas, categories, bajoArr, basicoArr, altoArr, superiorArr) {
+  function renderSvgStackedBar(canvas, categories, bajoArr, basicoArr, altoArr, superiorArr, nivelLabels, nivelColors) {
     const container = getFallbackContainer(canvas);
+    const labels = Array.isArray(nivelLabels) ? nivelLabels : ['Bajo', 'Básico', 'Alto', 'Superior'];
+    const colors = Array.isArray(nivelColors) ? nivelColors : [COLORS.bajo, COLORS.basico, COLORS.alto, COLORS.superior];
     let html = `<div style="display:flex; flex-direction:column; gap:8px; width:100%; padding:10px 0;">`;
     categories.forEach((cat, i) => {
       const b = bajoArr[i] || 0;
@@ -1114,10 +1260,10 @@ const Charts = (function() {
         <div style="display:flex; align-items:center; gap:8px; font-size:12px;">
           <span style="width:70px; font-weight:600; text-align:right;">${cat}</span>
           <div style="flex-grow:1; display:flex; height:20px; border-radius:4px; overflow:hidden;">
-            ${pB > 0 ? `<div style="width:${pB}%; background:${COLORS.bajo};" title="Bajo: ${b}"></div>` : ''}
-            ${pBs > 0 ? `<div style="width:${pBs}%; background:${COLORS.basico};" title="Básico: ${bs}"></div>` : ''}
-            ${pA > 0 ? `<div style="width:${pA}%; background:${COLORS.alto};" title="Alto: ${a}"></div>` : ''}
-            ${pS > 0 ? `<div style="width:${pS}%; background:${COLORS.superior};" title="Superior: ${s}"></div>` : ''}
+            ${pB > 0 ? `<div style="width:${pB}%; background:${colors[0]};" title="${labels[0]}: ${b}"></div>` : ''}
+            ${pBs > 0 ? `<div style="width:${pBs}%; background:${colors[1]};" title="${labels[1]}: ${bs}"></div>` : ''}
+            ${pA > 0 ? `<div style="width:${pA}%; background:${colors[2]};" title="${labels[2]}: ${a}"></div>` : ''}
+            ${pS > 0 ? `<div style="width:${pS}%; background:${colors[3]};" title="${labels[3]}: ${s}"></div>` : ''}
           </div>
           <span style="width:50px; font-weight:700; font-size:11px;">${total} est.</span>
         </div>`;

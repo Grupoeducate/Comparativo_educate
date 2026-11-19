@@ -37,14 +37,8 @@ const App = (function() {
     distributionGroupBy: 'grado'
   };
 
-  // Mapeo oficial de columnas en el CSV para Áreas y Componentes
-  const AREA_COLUMNS = {
-    'Lenguaje': 'LENGUAJE',
-    'Matematicas': 'MATEMÁTICAS',
-    'Ciencias Naturales': 'CIENCIAS NATURALES',
-    'Sociales': 'SOCIALES Y CIUDADANAS',
-    'Ingles': 'INGLÉS'
-  };
+  // Columnas de áreas: fuente única en window.Filters (getAreaColumn/getAreaLabel/getAreaScore).
+  // 'Lenguaje' depende de la escala: LENGUAJE en periódicas y LECTURA CRÍTICA en Saber.
 
   const COMPONENT_COLUMNS = {
     'Estadistica': 'ESTADÍSTICA',
@@ -69,11 +63,17 @@ const App = (function() {
       setupNavigation();
       setupEventListeners();
 
-      if (window.Auth && window.Auth.isAuthenticated()) {
+      // Sesión restaurada válida solo si el DANE sigue registrado y con datos publicados
+      if (window.Auth && window.Auth.isSessionValid()) {
         const session = window.Auth.getSession();
         updateUserUI(session);
-        await loadDataset(session.dane);
-        bootApplication();
+        try {
+          await loadDataset(session.dane);
+          bootApplication();
+        } catch (datasetErr) {
+          console.error(datasetErr);
+          window.Auth.logout();
+        }
       } else {
         showLoginOverlay(true);
       }
@@ -86,55 +86,50 @@ const App = (function() {
   }
 
   /**
-   * Carga los archivos JSON de configuración
-   * Utiliza window.EDUCATE360_CONFIG si está precargado, o fetch con fallbacks
+   * Carga los archivos JSON de configuración.
+   * Fuente de verdad: config/*.json (usuarios, institución, pruebas, escalas, desempeños, áreas).
+   * Ventaja sobre config_data.js: sirve cuando el visor se publica en hosting estático (GitHub Pages).
+   * El bundle window.EDUCATE360_CONFIG queda como respaldo para apertura local con file://.
    */
   async function loadConfigurations() {
     const cfg = window.EDUCATE360_CONFIG || {};
 
-    const fetchJson = async (path, fallback) => {
+    // Devuelve null cuando el JSON no está disponible (por ejemplo bajo file://)
+    const fetchJson = async (path) => {
       try {
         const res = await fetch(path);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
       } catch (e) {
-        return fallback;
+        return null;
       }
     };
 
-    const institucion = cfg.institucion || await fetchJson('config/institucion.json', {
+    // Resolución de configuración: JSON publicado > bundle config_data.js > respaldo mínimo
+    const pick = async (path, bundled, hardFallback) => {
+      const fetched = await fetchJson(path);
+      if (fetched) return fetched;
+      if (bundled) return bundled;
+      return hardFallback;
+    };
+
+    const institucion = await pick('config/institucion.json', cfg.institucion, {
       nombre: 'Colegio Cambridge',
       dane: '425377076576',
-      pin: '4587',
       ciudad: 'Bogotá',
-      anio_lectivo: 2026,
-      ciclos: {
-        "0": ["0", "Transición"],
-        "1": ["1", "2", "3"],
-        "2": ["4", "5"],
-        "3": ["6", "7"],
-        "4": ["8", "9"],
-        "5": ["10", "11"]
-      }
+      anio_lectivo: 2026
     });
 
-    const usuarios = cfg.usuarios || await fetchJson('config/usuarios.json', {
-      usuarios: [
-        { dane: '425377076576', clave: '4587', nombre: 'Colegio Cambridge', ciudad: 'Bogotá' }
-      ]
-    });
+    // Sin usuarios registrados no hay acceso posible: no se usa ningún usuario por defecto
+    const usuarios = await pick('config/usuarios.json', cfg.usuarios, { usuarios: [] });
 
-    const pruebas = cfg.pruebas || await fetchJson('config/pruebas.json', {
-      pruebas: [
-        { id: 'ALFA', nombre: 'Misión Alfa', tipo: 'periodica', orden: 1 },
-        { id: 'BETA', nombre: 'Misión Beta', tipo: 'periodica', orden: 2 },
-        { id: 'GAMMA', nombre: 'Misión Gamma', tipo: 'periodica', orden: 3 }
-      ]
-    });
+    // Sin catálogo de pruebas configurado no se inventan nombres: las etiquetas
+    // se resuelven con el código presente en el consolidado.
+    const pruebas = await pick('config/pruebas.json', cfg.pruebas, { pruebas: [] });
 
-    const escalas = cfg.escalas || await fetchJson('config/escalas.json', {});
-    const desempenos = cfg.desempenos || await fetchJson('config/desempenos.json', {});
-    const areas = cfg.areas || await fetchJson('config/areas.json', {
+    const escalas = await pick('config/escalas.json', cfg.escalas, {});
+    const desempenos = await pick('config/desempenos.json', cfg.desempenos, {});
+    const areas = await pick('config/areas.json', cfg.areas, {
       areas: [
         { nombre: 'Lenguaje', orden: 1, componentes: [] },
         { nombre: 'Matematicas', orden: 2, componentes: ['Estadistica', 'Geometria', 'Aritmetica'] },
@@ -149,11 +144,15 @@ const App = (function() {
 
   /**
    * Carga y parsea el archivo de pruebas dirigiéndose a la subcarpeta identificada con el DANE ingresado.
-   * Proceso 100% transparente: prioriza datos en memoria para evitar advertencias de apertura local.
+   * Solo se aceptan archivos dentro de data/{dane}/: no existen rutas genéricas compartidas entre instituciones.
    */
   async function loadDataset(dane) {
     let csvText = '';
-    const cleanDane = String(dane || (window.Auth && window.Auth.getSession() ? window.Auth.getSession().dane : '') || '425377076576').trim();
+    const cleanDane = String(dane || '').trim();
+
+    if (!cleanDane) {
+      throw new Error('No hay un código DANE activo en la sesión para cargar el consolidado.');
+    }
 
     // 1. Revisar si el consolidado data/{dane}/ ya está precargado en memoria
     if (window.EDUCATE360_DATA && window.EDUCATE360_DATA[cleanDane]) {
@@ -162,14 +161,11 @@ const App = (function() {
       console.log(`[Educate 360°] Consolidado institucional data/${cleanDane}/ cargado directamente desde memoria.`);
     }
 
-    // 2. Si no está en memoria, intentar fetch desde la subcarpeta data/{dane}/ y rutas prioritarias
+    // 2. Si no está en memoria, intentar fetch únicamente dentro de la carpeta del DANE
     if (!csvText) {
       const pathsToTry = [
         `data/${cleanDane}/consolidado_total.csv`,
-        `data/${cleanDane}/dashboard_data.csv`,
-        `data/${cleanDane}.csv`,
-        `data/consolidado_total.csv`,
-        `pruebas/consolidado_total.csv`
+        `data/${cleanDane}/dashboard_data.csv`
       ];
       
       for (const p of pathsToTry) {
@@ -187,71 +183,82 @@ const App = (function() {
     }
 
     if (!csvText) {
-      if (window.location.protocol === 'file:') {
-        csvText = await requestManualCsvSelection(cleanDane);
-      } else {
-        throw new Error(`No se pudo localizar el archivo de pruebas en data/${cleanDane}/ ni en rutas alternativas.`);
-      }
+      throw new Error(`No se encontró el consolidado de pruebas en data/${cleanDane}/. Publique la carpeta de la institución antes de habilitar el acceso.`);
     }
 
-    state.rawRecords = parseSemicolonCSV(csvText);
+    state.rawRecords = parseCsvText(csvText);
+    if (state.rawRecords.length === 0) {
+      throw new Error(`El consolidado de data/${cleanDane}/ no contiene registros legibles. Verifique el archivo y su separador de columnas.`);
+    }
     state.currentFilteredRecords = [...state.rawRecords];
   }
 
   /**
-   * Respaldo para apertura directa mediante protocolo file:// cuando no hay precarga en memoria
+   * Detecta el separador del consolidado a partir de la línea de encabezados.
+   * Cada institución exporta su archivo con punto y coma (;) o con coma (,).
    */
-  function requestManualCsvSelection(dane) {
-    return new Promise((resolve, reject) => {
-      const loader = document.getElementById('global-loader');
-      if (loader) {
-        loader.innerHTML = `
-          <div style="background:#1e293b; padding:2rem; border-radius:16px; max-width:480px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.5); border:1px solid #334155;">
-            <h3 style="font-size:1.2rem; font-weight:700; color:#fff; margin-bottom:0.75rem;">Apertura Local del Visor</h3>
-            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:1.25rem; line-height:1.5;">
-              Cargue el consolidado de pruebas para la institución con DANE <strong>${dane}</strong>:
-            </p>
-            <label class="btn-primary" style="display:inline-block; cursor:pointer; padding:0.75rem 1.5rem; background:#0284c7;">
-              Seleccionar data/${dane}/consolidado_total.csv
-              <input type="file" id="fallback-csv-picker" accept=".csv" style="display:none;">
-            </label>
-          </div>
-        `;
-
-        const fileInput = document.getElementById('fallback-csv-picker');
-        fileInput.addEventListener('change', (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = (evt) => {
-            loader.style.display = 'none';
-            resolve(evt.target.result);
-          };
-          reader.onerror = () => reject(new Error('Error leyendo archivo CSV'));
-          reader.readAsText(file, 'utf-8');
-        });
-      } else {
-        reject(new Error('No se pudo cargar el archivo CSV'));
+  function detectDelimiter(headerLine) {
+    const candidates = [';', ',', '\t'];
+    let best = ';';
+    let bestColumns = 1;
+    candidates.forEach(candidate => {
+      const columns = splitDelimitedLine(headerLine, candidate).length;
+      if (columns > bestColumns) {
+        best = candidate;
+        bestColumns = columns;
       }
     });
+    return best;
   }
 
   /**
-   * Parseador robusto de CSV delimitado por punto y coma (;)
+   * Separa una línea de CSV respetando los campos entre comillas dobles.
    */
-  function parseSemicolonCSV(text) {
+  function splitDelimitedLine(line, delimiter) {
+    const cells = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+      if (char === delimiter && !inQuotes) {
+        cells.push(current);
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+
+    cells.push(current);
+    return cells;
+  }
+
+  /**
+   * Parseador robusto de CSV con autodetección de separador (; o ,)
+   */
+  function parseCsvText(text) {
     if (!text) return [];
     const cleanText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
     const lines = cleanText.split(/\r?\n/).filter(line => line.trim().length > 0);
     if (lines.length === 0) return [];
 
-    const headers = lines[0].split(';').map(h => h.trim());
+    const delimiter = detectDelimiter(lines[0]);
+    const headers = splitDelimitedLine(lines[0], delimiter).map(h => h.trim());
     const records = [];
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
-      const cols = line.split(';');
+      const cols = splitDelimitedLine(line, delimiter);
       const row = {};
       headers.forEach((h, idx) => {
         row[h] = cols[idx] !== undefined ? cols[idx].trim() : '';
@@ -262,11 +269,12 @@ const App = (function() {
   }
 
   /**
-   * Configuración de la capa de autenticación con usuarios.json
+   * Configuración de la capa de autenticación con usuarios.json.
+   * El login valida registro del DANE, existencia de data/{dane}/ y coincidencia de clave.
    */
   function setupAuth() {
     window.Auth.init(state.configs.institucion, state.configs.usuarios);
-    
+
     window.Auth.onAuthStateChanged(async (isAuthed, session) => {
       if (isAuthed && session) {
         showLoginOverlay(false);
@@ -277,7 +285,9 @@ const App = (function() {
           bootApplication();
         } catch (err) {
           console.error(err);
-          showGlobalError(`No se pudieron cargar los datos de la subcarpeta data/${session.dane}/`);
+          // Sin consolidado publicado no se habilita el visor para esa institución
+          window.Auth.logout();
+          showGlobalError(err.message || `No se pudieron cargar los datos de data/${session.dane}/`);
         } finally {
           showLoading(false);
         }
@@ -288,20 +298,33 @@ const App = (function() {
 
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
-      loginForm.addEventListener('submit', (e) => {
+      loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const dane = document.getElementById('login-dane').value;
-        const pin = document.getElementById('login-pin').value;
+        const daneInp = document.getElementById('login-dane');
+        const pinInp = document.getElementById('login-pin');
         const errEl = document.getElementById('login-error');
+        const submitBtn = loginForm.querySelector('button[type="submit"]');
+        if (!daneInp || !pinInp) return;
 
-        const result = window.Auth.login(dane, pin);
-        if (!result.success) {
-          if (errEl) {
+        if (submitBtn) submitBtn.disabled = true;
+        if (errEl) errEl.style.display = 'none';
+
+        try {
+          const result = await window.Auth.login(daneInp.value, pinInp.value);
+          if (!result.success && errEl) {
             errEl.textContent = result.message;
             errEl.style.display = 'block';
+            if (pinInp) pinInp.value = '';
+            pinInp.focus();
           }
-        } else {
-          if (errEl) errEl.style.display = 'none';
+        } catch (err) {
+          console.error(err);
+          if (errEl) {
+            errEl.textContent = 'No fue posible verificar sus credenciales. Intente nuevamente.';
+            errEl.style.display = 'block';
+          }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
         }
       });
     }
@@ -344,6 +367,31 @@ const App = (function() {
   }
 
   /**
+   * Deriva el Puntaje Global oficial de las filas Saber que llegaron sin PUNTAJE,
+   * aplicando la ponderación ICFES (Resolución 268 de 2020) sobre las áreas (0 a 100).
+   * Marca cada fila derivada con PUNTAJE_DERIVADO sin alterar las columnas originales.
+   * Se ejecuta una sola vez, justo después de cargar el consolidado y de inicializar
+   * Filters (que ya tiene la configuración de escalas).
+   */
+  function derivarPuntajesGlobales() {
+    let derivados = 0;
+    state.rawRecords.forEach(r => {
+      if (window.Filters.getTipoPrueba(r.PRUEBA) !== 'saber') return;
+      const actual = parseFloat(String(r.PUNTAJE || '').replace(',', '.'));
+      if (!isNaN(actual) && actual > 0) return;
+      const pg = window.Filters.calcularPuntajeGlobal(r);
+      if (pg !== null && !isNaN(pg)) {
+        r.PUNTAJE = String(pg);
+        r.PUNTAJE_DERIVADO = 'true';
+        derivados++;
+      }
+    });
+    if (derivados > 0) {
+      console.log(`[Educate 360°] Puntaje global derivado con la ponderación ICFES para ${derivados} registros Saber sin PUNTAJE.`);
+    }
+  }
+
+  /**
    * Inicializa la interfaz una vez validado el acceso
    */
   function bootApplication() {
@@ -351,6 +399,8 @@ const App = (function() {
       state.currentFilteredRecords = filteredRows;
       renderActiveModule();
     });
+
+    derivarPuntajesGlobales();
 
     state.currentFilteredRecords = window.Filters.getFilteredRecords();
     renderActiveModule();
@@ -470,7 +520,7 @@ const App = (function() {
     const currentGrupo = filterState.grupo;
     const availableGroups = window.Filters.getGroupsForGrade(currentGrado);
 
-    const gradoLabel = currentGrado !== 'todos' ? `Grado ${currentGrado}°` : 'Todos los Grados (1° a 10°)';
+    const gradoLabel = currentGrado !== 'todos' ? `Grado ${currentGrado}°` : 'Todos los Grados';
     
     let groupsHtml = '';
     if (availableGroups.length > 0) {
@@ -520,6 +570,147 @@ const App = (function() {
   // MÓDULO 1: Dashboard Ejecutivo
   // ==========================================================================
 
+  /**
+   * Tipos de escala realmente presentes en los registros, en orden estable
+   * (Periódicas primero). Alimenta las gráficas separadas por escala.
+   */
+  function getTiposPresentes(records) {
+    const encontrados = [];
+    (records || []).forEach(r => {
+      const tipo = window.Filters.getTipoPrueba(r.PRUEBA);
+      if (!encontrados.includes(tipo)) encontrados.push(tipo);
+    });
+    return ['periodica', 'saber'].filter(t => encontrados.includes(t));
+  }
+
+  /**
+   * Mecanismo reutilizable de separación por escala:
+   * - Limpia el contenedor y destruye las instancias previas de sus canvas.
+   * - Crea un bloque por cada tipo presente con título, rango de escala y canvas
+   *   con id `${containerId}-${tipo}`, y delega el dibujo a buildFn.
+   * Solo se generan bloques para los tipos con datos: una institución con una
+   * sola escala conserva exactamente una gráfica.
+   */
+  function renderSplitCharts(containerId, tipos, buildFn) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Destruye las gráficas previas del contenedor (incluye canvas eliminados del DOM)
+    container.querySelectorAll('canvas[id]').forEach(canvas => {
+      window.Charts.destroyChart(canvas.id);
+    });
+    container.innerHTML = '';
+
+    // Abreviaturas oficiales de las áreas para la fórmula de ponderación ICFES
+    const ABREVIATURAS_PONDERACION = {
+      'LECTURA CRÍTICA': 'LC',
+      'MATEMÁTICAS': 'MA',
+      'CIENCIAS NATURALES': 'CN',
+      'SOCIALES Y CIUDADANAS': 'SC',
+      'INGLÉS': 'IN'
+    };
+
+    const tiposPresentes = (tipos || []).filter(t => t === 'periodica' || t === 'saber');
+
+    tiposPresentes.forEach((tipo, idx) => {
+      const escala = window.Filters.getEscala(tipo);
+      const escalaArea = window.Filters.getEscalaArea(tipo);
+      const pond = window.Filters.getPonderacion(tipo);
+      const titulo = tipo === 'saber' ? 'Pruebas Saber' : 'Pruebas Periódicas';
+
+      // Texto de escalas: en Saber se muestran AMBAS (áreas 0–100 y puntaje global 0–500
+      // con su fórmula oficial); en periódicas área y puntaje comparten la escala 1 a 5.
+      let textoEscala;
+      if (pond) {
+        const formula = Object.entries(pond.pesos)
+          .map(([columna, peso]) => `${peso}·${ABREVIATURAS_PONDERACION[columna] || columna}`)
+          .join(' + ');
+        textoEscala = `Áreas ${escalaArea.minimo} a ${escalaArea.maximo} · Puntaje global ${escala.minimo} a ${escala.maximo} (${formula})/${pond.divisor} × ${pond.factor}`;
+      } else {
+        textoEscala = `Áreas y puntaje ${escalaArea.minimo} a ${escalaArea.maximo}`;
+      }
+
+      const block = document.createElement('div');
+      block.className = 'chart-block' + (idx > 0 ? ' with-divider' : '');
+      block.innerHTML = `
+        <div class="chart-block-header">
+          <div class="chart-block-title">${titulo}</div>
+          <div class="chart-block-scale">${textoEscala} · Niveles: ${window.Filters.getNivelLabels(tipo).join(', ')}</div>
+        </div>
+        <div class="chart-container">
+          <canvas id="${containerId}-${tipo}"></canvas>
+        </div>
+      `;
+      container.appendChild(block);
+
+      if (typeof buildFn === 'function') {
+        buildFn(`${containerId}-${tipo}`, tipo, escala);
+      }
+    });
+  }
+
+  /**
+   * Lista de áreas académicas del consolidado (claves internas de config/areas.json).
+   */
+  function getAreasList() {
+    return ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
+  }
+
+  /**
+   * Mapa de etiquetas visibles por área para la escala indicada.
+   * En pruebas Saber el área de Lenguaje se muestra como "Lectura Crítica".
+   */
+  function getEtiquetasAreas(tipo) {
+    const etiquetas = {};
+    getAreasList().forEach(a => {
+      etiquetas[a] = window.Filters.getAreaLabel(a, tipo);
+    });
+    return etiquetas;
+  }
+
+  /**
+   * Áreas resueltas para gráficas: clave interna, etiqueta visible y columna
+   * del CSV correspondiente a la escala indicada.
+   */
+  function getAreasResueltas(tipo) {
+    return getAreasList().map(a => ({
+      key: a,
+      label: window.Filters.getAreaLabel(a, tipo),
+      col: window.Filters.getAreaColumn(a, tipo)
+    }));
+  }
+
+  /**
+   * Promedio por área académica de un subconjunto de registros (un solo tipo de escala).
+   */
+  function computeAreaAverages(records, areasList, tipo) {
+    const areaAverages = {};
+    areasList.forEach(areaName => {
+      const areaScores = records
+        .map(r => window.Filters.getAreaScore(r, areaName, tipo))
+        .filter(s => !isNaN(s));
+      areaAverages[areaName] = areaScores.length > 0
+        ? areaScores.reduce((a, b) => a + b, 0) / areaScores.length
+        : 0;
+    });
+    return areaAverages;
+  }
+
+  /**
+   * Distribución de desempeños de un subconjunto de registros según la escala
+   * de la prueba de cada fila. Las claves son las ranuras internas estables.
+   */
+  function computeDistribution(records) {
+    const distribution = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
+    records.forEach(r => {
+      const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO, window.Filters.getTipoPrueba(r.PRUEBA));
+      if (distribution[info.key] !== undefined) {
+        distribution[info.key]++;
+      }
+    });
+    return distribution;
+  }
+
   function renderDashboardModule() {
     const records = state.currentFilteredRecords;
 
@@ -527,145 +718,266 @@ const App = (function() {
     const totalGrados = new Set(records.map(r => r.GRADO).filter(Boolean)).size;
     const totalGrupos = new Set(records.map(r => `${r.GRADO}-${r.GRUPO}`).filter(Boolean)).size;
 
-    const scores = records
-      .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
-      .filter(s => !isNaN(s));
-    
-    const generalAverage = scores.length > 0 
-      ? scores.reduce((a, b) => a + b, 0) / scores.length 
-      : 0;
-
-    const areaAverages = {};
-    const areasList = ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
-    
-    areasList.forEach(areaName => {
-      const col = AREA_COLUMNS[areaName];
-      const areaScores = records
-        .map(r => parseFloat(String(r[col] || '').replace(',', '.')))
-        .filter(s => !isNaN(s));
-      areaAverages[areaName] = areaScores.length > 0
-        ? areaScores.reduce((a, b) => a + b, 0) / areaScores.length
-        : 0;
-    });
-
-    let bestArea = { name: 'N/A', avg: 0 };
-    let criticalArea = { name: 'N/A', avg: 5.1 };
-
-    Object.entries(areaAverages).forEach(([name, avg]) => {
-      if (avg > bestArea.avg) bestArea = { name, avg };
-      if (avg > 0 && avg < criticalArea.avg) criticalArea = { name, avg };
-    });
-
-    if (criticalArea.avg > 5.0) criticalArea = { name: 'Ninguna', avg: 0 };
-
-    const distribution = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
-    records.forEach(r => {
-      const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO);
-      if (distribution[info.key] !== undefined) {
-        distribution[info.key]++;
-      }
-    });
-
-    setText('kpi-promedio-general', generalAverage > 0 ? generalAverage.toFixed(2) : '-');
     setText('kpi-estudiantes-total', totalEstudiantes);
     setText('kpi-grados-total', totalGrados);
     setText('kpi-grupos-total', totalGrupos);
-    setText('kpi-mejor-area-nombre', bestArea.name);
-    setText('kpi-mejor-area-score', bestArea.avg > 0 ? `${bestArea.avg.toFixed(2)} / 5.0` : '-');
-    setText('kpi-area-critica-nombre', criticalArea.name);
-    setText('kpi-area-critica-score', criticalArea.avg > 0 ? `${criticalArea.avg.toFixed(2)} / 5.0` : '-');
 
-    const genInfo = window.Filters.getDesempenoInfo(
-      generalAverage >= 4.8 ? 'Superior' :
-      generalAverage >= 4.0 ? 'Alto' :
-      generalAverage >= 3.6 ? 'Basico' : 'Bajo'
-    );
-    const badgeEl = document.getElementById('kpi-promedio-badge');
-    if (badgeEl) {
-      badgeEl.innerHTML = `<span class="badge-dot"></span> Desempeño ${genInfo.label}`;
-      badgeEl.className = `badge-desempeno badge-${genInfo.key.toLowerCase()}`;
+    const areasList = getAreasList();
+    const tipos = getTiposPresentes(records);
+
+    // Los promedios generales solo son comparables dentro de una misma escala
+    if (tipos.length !== 1) {
+      // Con escalas mixtas (o sin registros tras los filtros) el promedio general no es comparable
+      setText('kpi-promedio-general', '-');
+      setText('kpi-mejor-area-nombre', '-');
+      setText('kpi-mejor-area-score', '-');
+      setText('kpi-area-critica-nombre', '-');
+      setText('kpi-area-critica-score', '-');
+      setText('kpi-promedio-hint', tipos.length > 1
+        ? 'Escalas mixtas: el promedio general no es comparable'
+        : 'Sin registros para los filtros aplicados');
+
+      const badgeEl = document.getElementById('kpi-promedio-badge');
+      if (badgeEl) {
+        badgeEl.innerHTML = '<span class="badge-dot"></span> Escalas mixtas';
+        badgeEl.className = 'badge-desempeno badge-mixta';
+      }
+    } else {
+      const tipo = tipos[0];
+      const escala = window.Filters.getEscala(tipo);
+      // Los KPI de mejor/crítica comparan ÁREAS: usan la escala de áreas (0–100 en Saber),
+      // mientras el promedio general usa la escala global del PUNTAJE (0–500 en Saber).
+      const escalaArea = window.Filters.getEscalaArea(tipo);
+
+      const scores = records
+        .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
+        .filter(s => !isNaN(s));
+
+      const generalAverage = scores.length > 0
+        ? scores.reduce((a, b) => a + b, 0) / scores.length
+        : 0;
+
+      const areaAverages = computeAreaAverages(records, areasList, tipo);
+
+      let bestArea = { name: 'N/A', avg: 0 };
+      let criticalArea = { name: 'N/A', avg: escalaArea.maximo + 0.1 };
+
+      Object.entries(areaAverages).forEach(([name, avg]) => {
+        if (avg > bestArea.avg) bestArea = { name, avg };
+        if (avg > 0 && avg < criticalArea.avg) criticalArea = { name, avg };
+      });
+
+      if (criticalArea.avg > escalaArea.maximo) criticalArea = { name: 'Ninguna', avg: 0 };
+
+      setText('kpi-promedio-general', generalAverage > 0 ? generalAverage.toFixed(2) : '-');
+      setText('kpi-mejor-area-nombre', window.Filters.getAreaLabel(bestArea.name, tipo));
+      setText('kpi-mejor-area-score', bestArea.avg > 0 ? `${bestArea.avg.toFixed(2)} / ${escalaArea.maximo}` : '-');
+      setText('kpi-area-critica-nombre', window.Filters.getAreaLabel(criticalArea.name, tipo));
+      setText('kpi-area-critica-score', criticalArea.avg > 0 ? `${criticalArea.avg.toFixed(2)} / ${escalaArea.maximo}` : '-');
+
+      // Aclaración del promedio general: en Saber es el Puntaje Global oficial ponderado
+      // (IG = (3·LC + 3·MA + 3·CN + 3·SC + 1·IN)/13, PG = IG×5), no el promedio simple de áreas.
+      setText('kpi-promedio-hint', tipo === 'saber'
+        ? 'Puntaje Global oficial ICFES (ponderado)'
+        : 'Promedio en escala de 1 a 5');
+
+      // Nivel de desempeño del promedio según la escala oficial del tipo
+      const genNivel = window.Filters.getNivelPorPuntaje(tipo, generalAverage);
+      const badgeEl = document.getElementById('kpi-promedio-badge');
+      if (badgeEl) {
+        badgeEl.innerHTML = `<span class="badge-dot"></span> Desempeño ${genNivel.label}`;
+        badgeEl.className = `badge-desempeno badge-${genNivel.key.toLowerCase()}`;
+      }
     }
 
-    // Gráfico comparativo de áreas con valores numéricos sobre las barras
-    window.Charts.renderExecutiveOverview('chart-dashboard-areas', areaAverages, distribution);
-    window.Charts.renderExecutiveDonut('chart-dashboard-donut', distribution);
+    // Gráficas separadas por escala (una sola cuando la institución usa un único tipo)
+    const areaAveragesPorTipo = {};
+    const distributionPorTipo = {};
+    tipos.forEach(tipo => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      areaAveragesPorTipo[tipo] = computeAreaAverages(recsTipo, areasList, tipo);
+      distributionPorTipo[tipo] = computeDistribution(recsTipo);
+    });
 
-    renderDashboardGradesTable(records, areasList);
+    // Promedio comparativo por área con valores numéricos sobre las barras.
+    // Las áreas se grafican en su ESCALA DE ÁREAS (0–100 en Saber, 1–5 en periódicas).
+    renderSplitCharts('split-chart-dashboard-areas', tipos, (canvasId, tipo, escala) => {
+      window.Charts.renderExecutiveOverview(
+        canvasId,
+        areaAveragesPorTipo[tipo],
+        distributionPorTipo[tipo],
+        { escala: window.Filters.getEscalaArea(tipo), niveles: window.Filters.getNiveles(tipo), etiquetas: getEtiquetasAreas(tipo) }
+      );
+    });
+
+    // Distribución institucional por escala
+    renderSplitCharts('split-chart-dashboard-donut', tipos, (canvasId, tipo, escala) => {
+      window.Charts.renderExecutiveDonut(
+        canvasId,
+        distributionPorTipo[tipo],
+        { escala, niveles: window.Filters.getNiveles(tipo) }
+      );
+    });
+
+    renderDashboardGradesTable(records, areasList, tipos);
   }
 
   /**
-   * Resumen de Desempeño por Grado con barra apilada cromática
-   * Cumple con Requerimiento 5: después de los 4 badges de desempeño, coloca la barra apilada con los colores oficiales
+   * Resumen de Desempeño por Grado con barra apilada cromática.
+   * Cuando el consolidado mezcla escalas, se genera una fila por grado y tipo,
+   * con etiquetas y colores de los niveles de la escala correspondiente.
    */
-  function renderDashboardGradesTable(records, areasList) {
+  function renderDashboardGradesTable(records, areasList, tipos) {
     const container = document.getElementById('dashboard-grades-table-body');
     if (!container) return;
 
-    const grades = [...new Set(records.map(r => r.GRADO).filter(Boolean))]
-      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    const tiposPresentes = Array.isArray(tipos) && tipos.length > 0 ? tipos : getTiposPresentes(records);
+    const mixto = tiposPresentes.length > 1;
 
     let html = '';
-    grades.forEach(g => {
-      const gradeRecords = records.filter(r => r.GRADO === g);
-      const scores = gradeRecords
-        .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
-        .filter(s => !isNaN(s));
-      const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : '-';
+    tiposPresentes.forEach(tipo => {
+      const escala = window.Filters.getEscala(tipo);
+      const niveles = window.Filters.getNiveles(tipo);
+      const colores = window.Filters.getNivelColors(tipo);
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
 
-      const perfCounts = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
-      gradeRecords.forEach(r => {
-        const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO);
-        if (perfCounts[info.key] !== undefined) {
-          perfCounts[info.key]++;
-        }
-      });
+      const grades = [...new Set(recsTipo.map(r => r.GRADO).filter(Boolean))]
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
-      const total = perfCounts.Bajo + perfCounts.Basico + perfCounts.Alto + perfCounts.Superior || 1;
-      const pB = (perfCounts.Bajo / total) * 100;
-      const pBs = (perfCounts.Basico / total) * 100;
-      const pA = (perfCounts.Alto / total) * 100;
-      const pS = (perfCounts.Superior / total) * 100;
+      grades.forEach(g => {
+        const gradeRecords = recsTipo.filter(r => r.GRADO === g);
+        const scores = gradeRecords
+          .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
+          .filter(s => !isNaN(s));
+        const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : '-';
 
-      html += `
-        <tr>
-          <td><strong>Grado ${g}°</strong></td>
-          <td>${gradeRecords.length}</td>
-          <td class="score-cell">${avg}</td>
-          <td>
-            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-              <span class="badge-desempeno badge-bajo" title="Bajo">${perfCounts.Bajo}</span>
-              <span class="badge-desempeno badge-basico" title="Básico">${perfCounts.Basico}</span>
-              <span class="badge-desempeno badge-alto" title="Alto">${perfCounts.Alto}</span>
-              <span class="badge-desempeno badge-superior" title="Superior">${perfCounts.Superior}</span>
-              <div class="mini-stacked-bar" style="flex:1; min-width:130px; max-width:200px; height:14px; background:#e2e8f0; border-radius:4px; overflow:hidden; display:flex; box-shadow:inset 0 1px 2px rgba(0,0,0,0.1);" title="Distribución: Bajo ${pB.toFixed(1)}%, Básico ${pBs.toFixed(1)}%, Alto ${pA.toFixed(1)}%, Superior ${pS.toFixed(1)}%">
-                ${pB > 0 ? `<div style="width:${pB}%; height:100%; background:#bf0000;" title="Bajo: ${perfCounts.Bajo} (${pB.toFixed(1)}%)"></div>` : ''}
-                ${pBs > 0 ? `<div style="width:${pBs}%; height:100%; background:#ffbf00;" title="Básico: ${perfCounts.Basico} (${pBs.toFixed(1)}%)"></div>` : ''}
-                ${pA > 0 ? `<div style="width:${pA}%; height:100%; background:#01b1f0;" title="Alto: ${perfCounts.Alto} (${pA.toFixed(1)}%)"></div>` : ''}
-                ${pS > 0 ? `<div style="width:${pS}%; height:100%; background:#01af51;" title="Superior: ${perfCounts.Superior} (${pS.toFixed(1)}%)"></div>` : ''}
+        const perfCounts = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
+        gradeRecords.forEach(r => {
+          const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO, tipo);
+          if (perfCounts[info.key] !== undefined) {
+            perfCounts[info.key]++;
+          }
+        });
+
+        const total = perfCounts.Bajo + perfCounts.Basico + perfCounts.Alto + perfCounts.Superior || 1;
+        const porcentajes = niveles.map(n => (perfCounts[n.key] / total) * 100);
+
+        const etiquetaGrado = mixto ? `${escala.etiqueta} · Grado ${g}°` : `Grado ${g}°`;
+        const tituloDistribucion = `Distribución (${escala.etiqueta}): ` +
+          niveles.map((n, i) => `${n.label} ${porcentajes[i].toFixed(1)}%`).join(', ');
+
+        const badges = niveles.map(n =>
+          `<span class="badge-desempeno badge-${n.key.toLowerCase()}" title="${n.label}">${perfCounts[n.key]}</span>`
+        ).join('');
+
+        const segmentos = niveles.map((n, i) => porcentajes[i] > 0
+          ? `<div style="width:${porcentajes[i]}%; height:100%; background:${colores[i]};" title="${n.label}: ${perfCounts[n.key]} (${porcentajes[i].toFixed(1)}%)"></div>`
+          : ''
+        ).join('');
+
+        html += `
+          <tr>
+            <td><strong>${etiquetaGrado}</strong></td>
+            <td>${gradeRecords.length}</td>
+            <td class="score-cell">${avg}</td>
+            <td>
+              <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                ${badges}
+                <div class="mini-stacked-bar" style="flex:1; min-width:130px; max-width:200px; height:14px; background:#e2e8f0; border-radius:4px; overflow:hidden; display:flex; box-shadow:inset 0 1px 2px rgba(0,0,0,0.1);" title="${tituloDistribucion}">
+                  ${segmentos}
+                </div>
               </div>
-            </div>
-          </td>
-        </tr>`;
+            </td>
+          </tr>`;
+      });
     });
 
     container.innerHTML = html || '<tr><td colspan="4" class="text-center">Sin datos disponibles</td></tr>';
   }
 
   // ==========================================================================
-  // MÓDULO 2: Evolución Institucional (Alpha -> Beta -> Gamma)
+  // Pruebas disponibles en el consolidado de la institución
   // ==========================================================================
 
-  function renderEvolucionModule() {
-    const records = state.currentFilteredRecords;
-    const pruebas = ['ALFA', 'BETA', 'GAMMA'];
-    const areasList = ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles'];
+  /**
+   * Catálogo de pruebas configurado en config/pruebas.json, ordenado por 'orden'.
+   */
+  function getPruebaCatalog() {
+    const raw = (state.configs.pruebas && state.configs.pruebas.pruebas) ? state.configs.pruebas.pruebas : [];
+    return raw.slice().sort((a, b) => (Number(a.orden) || 99) - (Number(b.orden) || 99));
+  }
 
+  /**
+   * Etiqueta visible de una prueba: el nombre de config/pruebas.json cuando el
+   * código coincide; en caso contrario el código presente en el consolidado,
+   * sin asumir nombres de pruebas que no están en los datos.
+   */
+  function pruebaLabel(codigo) {
+    const code = pruebaCode(codigo);
+    const cfg = getPruebaCatalog().find(cp => {
+      const nombre = pruebaCode(cp.nombre);
+      return pruebaCode(cp.id) === code || nombre === code || nombre.endsWith(' ' + code);
+    });
+    return cfg && cfg.nombre ? cfg.nombre : code;
+  }
+
+  /**
+   * Código de prueba normalizado, tal como llega en la columna PRUEBA del consolidado.
+   */
+  function pruebaCode(value) {
+    return String(value === undefined || value === null ? '' : value).trim().toUpperCase();
+  }
+
+  /**
+   * Posición de una prueba dentro del catálogo configurado. Las no configuradas van al final.
+   */
+  function pruebaOrder(code) {
+    const catalog = getPruebaCatalog();
+    const idx = catalog.findIndex(cp => {
+      const id = pruebaCode(cp.id);
+      const nombre = pruebaCode(cp.nombre);
+      return id === code || nombre === code || nombre.endsWith(' ' + code);
+    });
+    return idx === -1 ? catalog.length : idx;
+  }
+
+  /**
+   * Pruebas realmente presentes en el consolidado de la institución.
+   * Las gráficas, tablas y filtros solo muestran estas pruebas: nunca ejes de pruebas inexistentes en el CSV.
+   */
+  function getAvailablePruebas(records) {
+    const source = records || state.rawRecords || [];
+    const present = [];
+    source.forEach(r => {
+      const code = pruebaCode(r.PRUEBA);
+      if (code && !present.includes(code)) present.push(code);
+    });
+
+    const csvOrder = new Map(present.map((code, idx) => [code, idx]));
+    return present.sort((a, b) => {
+      const byCatalog = pruebaOrder(a) - pruebaOrder(b);
+      if (byCatalog !== 0) return byCatalog;
+      return csvOrder.get(a) - csvOrder.get(b);
+    });
+  }
+
+  // ==========================================================================
+  // MÓDULO 2: Evolución Institucional (secuencia de pruebas del consolidado)
+  // ==========================================================================
+
+  /**
+   * Calcula los promedios generales y por área de una lista de pruebas.
+   * Cada prueba usa su propia escala: en Saber el área de Lenguaje se lee de
+   * LECTURA CRÍTICA y en periódicas de LENGUAJE.
+   */
+  function computeEvolucionData(records, pruebas, areasList) {
     const generalAverages = [];
     const areaAveragesMap = {};
     areasList.forEach(a => areaAveragesMap[a] = []);
 
     pruebas.forEach(p => {
       const pRecords = records.filter(r => String(r.PRUEBA).toUpperCase() === p);
+      const tipoPrueba = window.Filters.getTipoPrueba(p);
       const scores = pRecords
         .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
         .filter(s => !isNaN(s));
@@ -673,32 +985,102 @@ const App = (function() {
       generalAverages.push(pAvg);
 
       areasList.forEach(a => {
-        const col = AREA_COLUMNS[a];
         const aScores = pRecords
-          .map(r => parseFloat(String(r[col] || '').replace(',', '.')))
+          .map(r => window.Filters.getAreaScore(r, a, tipoPrueba))
           .filter(s => !isNaN(s));
         const aAvg = aScores.length > 0 ? aScores.reduce((x, y) => x + y, 0) / aScores.length : 0;
         areaAveragesMap[a].push(aAvg);
       });
     });
 
-    // Gráfico de línea interactivo (permite ocultar/mostrar líneas de área haciendo clic en la leyenda)
-    window.Charts.renderEvolutionChart('chart-evolucion-general', {
-      pruebas,
-      promedioGeneral: generalAverages,
-      areas: areaAveragesMap
+    return { generalAverages, areaAveragesMap };
+  }
+
+  function renderEvolucionModule() {
+    const records = state.currentFilteredRecords;
+    // La matriz solo muestra las pruebas que sobreviven a los filtros activos
+    const pruebas = getAvailablePruebas(records);
+    const areasList = getAreasList();
+    const tipos = getTiposPresentes(records);
+
+    // Curva de crecimiento por escala: una gráfica por cada tipo presente
+    renderSplitCharts('split-chart-evolucion', tipos, (canvasId, tipo, escala) => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      const pruebasTipo = getAvailablePruebas(recsTipo);
+      if (pruebasTipo.length === 0) return;
+
+      const { generalAverages, areaAveragesMap } = computeEvolucionData(recsTipo, pruebasTipo, areasList);
+
+      // Leyenda con la etiqueta visible de cada área según la escala
+      const areasLabeled = {};
+      const coloresArea = {};
+      areasList.forEach(a => {
+        const label = window.Filters.getAreaLabel(a, tipo);
+        areasLabeled[label] = areaAveragesMap[a];
+        coloresArea[label] = window.Charts.AREA_COLORS[a] || '#0284c7';
+      });
+
+      // Gráfico de línea interactivo (permite ocultar/mostrar líneas de área haciendo clic en la leyenda)
+      if (tipo === 'saber') {
+        // En Saber el puntaje global (0 a 500) y las áreas (0 a 100) no comparten escala:
+        // se dibujan dos curvas para no aplastar las líneas de área contra el eje global.
+        const canvasBase = document.getElementById(canvasId);
+        if (canvasBase && canvasBase.parentElement) {
+          const contenedorBase = canvasBase.parentElement;
+          const areasId = `${canvasId}-areas`;
+          contenedorBase.insertAdjacentHTML('beforebegin', '<div class="chart-block-scale">Puntaje global por prueba (0 a 500)</div>');
+          contenedorBase.insertAdjacentHTML('afterend', `<div class="chart-block-scale" style="margin-top:1rem;">Promedios por área (0 a 100)</div><div class="chart-container" style="min-height:280px;"><canvas id="${areasId}"></canvas></div>`);
+
+          window.Charts.renderEvolutionChart(canvasId, {
+            pruebas: pruebasTipo,
+            promedioGeneral: generalAverages
+          }, { escala, niveles: window.Filters.getNiveles(tipo) });
+
+          window.Charts.renderEvolutionChart(areasId, {
+            pruebas: pruebasTipo,
+            promedioGeneral: null,
+            areas: areasLabeled,
+            colores: coloresArea
+          }, { escala: window.Filters.getEscalaArea(tipo), niveles: window.Filters.getNiveles(tipo) });
+        }
+        return;
+      }
+
+      window.Charts.renderEvolutionChart(canvasId, {
+        pruebas: pruebasTipo,
+        promedioGeneral: generalAverages,
+        areas: areasLabeled,
+        colores: coloresArea
+      }, { escala, niveles: window.Filters.getNiveles(tipo) });
     });
 
+    const { generalAverages, areaAveragesMap } = computeEvolucionData(records, pruebas, areasList);
+
     const tbody = document.getElementById('table-evolucion-body');
-    if (tbody) {
+    if (tbody && pruebas.length === 0) {
+      const hayPruebasEnConsolidado = getAvailablePruebas().length > 0;
+      const mensaje = hayPruebasEnConsolidado
+        ? 'Ninguna prueba del consolidado coincide con los filtros aplicados.'
+        : 'El consolidado no contiene pruebas registradas.';
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center">${mensaje}</td></tr>`;
+    }
+    if (tbody && pruebas.length > 0) {
       let html = '';
+      let tipoPruebaAnterior = null;
       pruebas.forEach((p, idx) => {
         const pRecords = records.filter(r => String(r.PRUEBA).toUpperCase() === p);
         const prevAvg = idx > 0 ? generalAverages[idx - 1] : null;
         const currentAvg = generalAverages[idx];
         let deltaBadge = '<span class="evolution-delta-badge delta-neutral">-</span>';
 
-        if (prevAvg !== null && prevAvg > 0 && currentAvg > 0) {
+        // La variación solo es comparable dentro de la misma escala: pruebas del
+        // mismo tipo (periódica 1-5 o Saber 0-500) se califican distinto, así que
+        // entre tipos no se calcula delta.
+        const tipoActual = window.Filters.getTipoPrueba(p);
+        const mismoTipo = tipoPruebaAnterior !== null && tipoActual === tipoPruebaAnterior;
+        tipoPruebaAnterior = tipoActual;
+
+        if (mismoTipo && prevAvg !== null && prevAvg > 0 && currentAvg > 0) {
           const diff = currentAvg - prevAvg;
           if (diff > 0) {
             deltaBadge = `<span class="evolution-delta-badge delta-positive">+${diff.toFixed(2)}</span>`;
@@ -709,9 +1091,16 @@ const App = (function() {
           }
         }
 
+        // Escala oficial de la prueba: puntaje global y escala de áreas, para que
+        // los promedios de la matriz sean interpretables en cada columna.
+        const tipoPrueba = window.Filters.getTipoPrueba(p);
+        const escalaPrueba = window.Filters.getEscala(tipoPrueba);
+        const escalaAreaPrueba = window.Filters.getEscalaArea(tipoPrueba);
+
         html += `
           <tr>
-            <td><strong>Misión ${p}</strong></td>
+            <td><strong>${escapeHtml(pruebaLabel(p))}</strong></td>
+            <td>${escalaPrueba.etiqueta} ${escalaPrueba.minimo}–${escalaPrueba.maximo} · Áreas ${escalaAreaPrueba.minimo}–${escalaAreaPrueba.maximo}</td>
             <td>${pRecords.length}</td>
             <td class="score-cell">${currentAvg > 0 ? currentAvg.toFixed(2) : '-'}</td>
             <td>${deltaBadge}</td>
@@ -727,11 +1116,18 @@ const App = (function() {
     }
 
     // Requerimiento 8: Gráfica vertical con nombre "Comparativo por grado y grupo"
-    window.Charts.renderGradeGroupComparison(
-      'chart-evolucion-grados-grupos',
-      records,
-      areasList
-    );
+    // Separada por escala para no mezclar puntajes 1-5 con puntajes 0-500 en un mismo eje.
+    // Las barras son promedios de ÁREAS: se pasa la escala de áreas (0–100 en Saber).
+    renderSplitCharts('split-chart-evolucion-grupos', tipos, (canvasId, tipo, escala) => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      if (recsTipo.length === 0) return;
+      window.Charts.renderGradeGroupComparison(
+        canvasId,
+        recsTipo,
+        getAreasResueltas(tipo),
+        { escala: window.Filters.getEscalaArea(tipo) }
+      );
+    });
   }
 
   // ==========================================================================
@@ -762,7 +1158,7 @@ const App = (function() {
       else if (rankNum === 2) puestoBadge = `<span class="puesto-badge puesto-2">2</span>`;
       else if (rankNum === 3) puestoBadge = `<span class="puesto-badge puesto-3">3</span>`;
 
-      const desInfo = window.Filters.getDesempenoInfo(row.DESEMPEÑO);
+      const desInfo = window.Filters.getDesempenoInfo(row.DESEMPEÑO, window.Filters.getTipoPrueba(row.PRUEBA));
       const studentName = row.ESTUDIANTE || 'Sin Nombre';
 
       html += `
@@ -774,7 +1170,7 @@ const App = (function() {
           </td>
           <td>Grado ${row.GRADO}°</td>
           <td>Grupo ${row.GRUPO}</td>
-          <td><span class="badge-desempeno" style="background:#f1f5f9; color:#334155;">Misión ${row.PRUEBA}</span></td>
+          <td><span class="badge-desempeno" style="background:#f1f5f9; color:#334155;">${escapeHtml(pruebaLabel(row.PRUEBA))}</span></td>
           <td class="score-cell">${row.PUNTAJE}</td>
           <td>
             <span class="badge-desempeno badge-${desInfo.key.toLowerCase()}">
@@ -818,48 +1214,70 @@ const App = (function() {
     const currentAreaCfg = areasConfig.find(a => a.nombre === state.selectedArea) || areasConfig[0];
     if (!currentAreaCfg) return;
 
-    const areaCol = AREA_COLUMNS[currentAreaCfg.nombre];
-    const areaScores = records
-      .map(r => parseFloat(String(r[areaCol] || '').replace(',', '.')))
-      .filter(s => !isNaN(s));
-    const areaAvg = areaScores.length > 0 ? areaScores.reduce((a, b) => a + b, 0) / areaScores.length : 0;
+    // Promedio del área y de sus componentes por escala presente. Cada escala
+    // lee su columna propia: en Saber el área de Lenguaje es LECTURA CRÍTICA
+    // y en periódicas es LENGUAJE.
+    let tiposArea = getTiposPresentes(records);
 
-    const componentsData = {};
-    if (currentAreaCfg.componentes && currentAreaCfg.componentes.length > 0) {
-      currentAreaCfg.componentes.forEach(compName => {
-        const col = COMPONENT_COLUMNS[compName] || compName.toUpperCase();
-        const compScores = records
-          .map(r => parseFloat(String(r[col] || '').replace(',', '.')))
-          .filter(s => !isNaN(s));
-        componentsData[compName] = compScores.length > 0 
-          ? compScores.reduce((a, b) => a + b, 0) / compScores.length 
-          : 0;
-      });
-    }
+    const datosPorTipo = {};
+    tiposArea.forEach(tipo => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      const areaScores = recsTipo
+        .map(r => window.Filters.getAreaScore(r, currentAreaCfg.nombre, tipo))
+        .filter(s => !isNaN(s));
+      const componentsData = {};
+      if (currentAreaCfg.componentes && currentAreaCfg.componentes.length > 0) {
+        currentAreaCfg.componentes.forEach(compName => {
+          const col = COMPONENT_COLUMNS[compName] || compName.toUpperCase();
+          const compScores = recsTipo
+            .map(r => parseFloat(String(r[col] || '').replace(',', '.')))
+            .filter(s => !isNaN(s));
+          componentsData[compName] = compScores.length > 0
+            ? compScores.reduce((a, b) => a + b, 0) / compScores.length
+            : 0;
+        });
+      }
+      datosPorTipo[tipo] = {
+        areaAvg: areaScores.length > 0 ? areaScores.reduce((a, b) => a + b, 0) / areaScores.length : 0,
+        componentsData
+      };
+    });
 
     const compGrid = document.getElementById('area-components-grid');
     if (compGrid) {
-      let compHtml = `
-        <div class="component-card" style="border-left: 4px solid var(--primary);">
-          <div class="component-title">Área General (${currentAreaCfg.nombre})</div>
-          <div class="component-score">${areaAvg > 0 ? areaAvg.toFixed(2) : '-'} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">/ 5.0</span></div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width:${(areaAvg / 5.0) * 100}%; background:var(--primary);"></div>
-          </div>
-        </div>
-      `;
+      let compHtml = '';
+      tiposArea.forEach(tipo => {
+        // Las áreas se presentan en la ESCALA DE ÁREAS (0–100 en Saber, 1–5 en periódicas)
+        const escalaArea = window.Filters.getEscalaArea(tipo);
+        const maximo = escalaArea.maximo;
+        const datos = datosPorTipo[tipo];
+        const areaLabel = window.Filters.getAreaLabel(currentAreaCfg.nombre, tipo);
+        const tituloGeneral = tiposArea.length > 1
+          ? `Área General (${areaLabel} · ${escala.etiqueta})`
+          : `Área General (${areaLabel})`;
 
-      Object.entries(componentsData).forEach(([compName, score]) => {
-        const pct = (score / 5.0) * 100;
         compHtml += `
-          <div class="component-card">
-            <div class="component-title">${compName}</div>
-            <div class="component-score">${score > 0 ? score.toFixed(2) : '-'} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">/ 5.0</span></div>
+          <div class="component-card" style="border-left: 4px solid var(--primary);">
+            <div class="component-title">${tituloGeneral}</div>
+            <div class="component-score">${datos.areaAvg > 0 ? datos.areaAvg.toFixed(2) : '-'} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">/ ${maximo}</span></div>
             <div class="progress-bar-bg">
-              <div class="progress-bar-fill" style="width:${pct}%; background:#64748b;"></div>
+              <div class="progress-bar-fill" style="width:${(datos.areaAvg / maximo) * 100}%; background:var(--primary);"></div>
             </div>
           </div>
         `;
+
+        Object.entries(datos.componentsData).forEach(([compName, score]) => {
+          const pct = (score / maximo) * 100;
+          compHtml += `
+            <div class="component-card">
+              <div class="component-title">${compName}</div>
+              <div class="component-score">${score > 0 ? score.toFixed(2) : '-'} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">/ ${maximo}</span></div>
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width:${pct}%; background:#64748b;"></div>
+              </div>
+            </div>
+          `;
+        });
       });
 
       compGrid.innerHTML = compHtml;
@@ -867,26 +1285,42 @@ const App = (function() {
 
     const titleEl = document.getElementById('title-chart-area-components');
     const subtitleEl = document.getElementById('subtitle-chart-area-components');
+    const areaTitulo = tiposArea.length === 1
+      ? window.Filters.getAreaLabel(currentAreaCfg.nombre, tiposArea[0])
+      : currentAreaCfg.nombre;
 
     // Requerimiento 10: Cuando 'todos' está seleccionado, muestra el promedio de cada grado y de cada grupo
+    // La gráfica se separa por escala para no mezclar puntajes 1-5 con 0-500 en un mismo eje.
     if (isAllGrades) {
-      if (titleEl) titleEl.textContent = `Promedios por Grado y Grupo en ${currentAreaCfg.nombre}`;
-      if (subtitleEl) subtitleEl.textContent = `Desglose institucional de todos los grados y sus grupos en ${currentAreaCfg.nombre}`;
-      window.Charts.renderAreaAllGradesGroupsChart(
-        'chart-area-components',
-        currentAreaCfg.nombre,
-        records
-      );
+      if (titleEl) titleEl.textContent = `Promedios por Grado y Grupo en ${areaTitulo}`;
+      if (subtitleEl) subtitleEl.textContent = `Desglose institucional de todos los grados y sus grupos en ${areaTitulo}`;
     } else {
-      if (titleEl) titleEl.textContent = `Comparativa de Componentes - ${currentAreaCfg.nombre}`;
-      if (subtitleEl) subtitleEl.textContent = `Puntajes de componentes de ${currentAreaCfg.nombre} vs máximo esperado`;
-      window.Charts.renderAreaComponentsChart(
-        'chart-area-components',
-        currentAreaCfg.nombre,
-        areaAvg,
-        componentsData
-      );
+      if (titleEl) titleEl.textContent = `Comparativa de Componentes - ${areaTitulo}`;
+      if (subtitleEl) subtitleEl.textContent = `Puntajes de componentes de ${areaTitulo} vs máximo esperado`;
     }
+
+    renderSplitCharts('split-chart-area-components', getTiposPresentes(records), (canvasId, tipo, escala) => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      if (recsTipo.length === 0) return;
+      const areaLabel = window.Filters.getAreaLabel(currentAreaCfg.nombre, tipo);
+      // Los puntajes graficados son de ÁREA/componentes: se pasa la escala de áreas
+      const escalaArea = window.Filters.getEscalaArea(tipo);
+      if (isAllGrades) {
+        window.Charts.renderAreaAllGradesGroupsChart(canvasId, currentAreaCfg.nombre, recsTipo, {
+          escala: escalaArea,
+          areaLabel,
+          col: window.Filters.getAreaColumn(currentAreaCfg.nombre, tipo)
+        });
+      } else {
+        window.Charts.renderAreaComponentsChart(
+          canvasId,
+          areaLabel,
+          datosPorTipo[tipo].areaAvg,
+          datosPorTipo[tipo].componentsData,
+          { escala: escalaArea }
+        );
+      }
+    });
   }
 
   function setSelectedArea(areaName) {
@@ -898,86 +1332,131 @@ const App = (function() {
   // MÓDULO 5: Distribución de Desempeños (Detalle Pedagógico)
   // ==========================================================================
 
-  function renderDesempenosModule() {
-    renderPedagogicalContextBar('context-banner-desempenos');
+  /**
+   * Leyenda oficial de colores construida según las escalas presentes.
+   * Cada tipo muestra sus nombres oficiales y colores de config/escalas.json y config/desempenos.json.
+   */
+  function renderLeyendaDesempenos(tipos) {
+    const cont = document.getElementById('leyenda-desempenos');
+    if (!cont) return;
 
-    const records = state.currentFilteredRecords;
-    const filterState = window.Filters.getState();
-    const isAllGrades = filterState.grado === 'todos';
+    const mixto = tipos.length > 1;
+    cont.innerHTML = tipos.map(tipo => {
+      const escala = window.Filters.getEscala(tipo);
+      const niveles = window.Filters.getNiveles(tipo);
+      const prefijo = mixto ? `<span class="legend-item legend-group">${escala.etiqueta}:</span>` : '';
+      return prefijo + niveles.map(n => `
+        <div class="legend-item" title="${n.label}: ${n.minimo} a ${n.maximo}">
+          <span class="legend-color-box" style="background:${n.color};"></span>
+          <span>${n.label}</span>
+        </div>`).join('');
+    }).join('');
+    cont.style.display = tipos.length > 0 ? 'flex' : 'none';
+  }
 
-    let categories = [];
-    let bajoArr = [];
-    let basicoArr = [];
-    let altoArr = [];
-    let superiorArr = [];
+  /**
+   * Categorías y conteos de desempeño de un subconjunto de registros (un solo tipo),
+   * usando la escala de la prueba de cada fila.
+   */
+  function computeStackedData(records, tipo) {
+    const data = { categories: [], bajo: [], basico: [], alto: [], superior: [] };
 
-    // Requerimiento 10: Cuando la opción todos está seleccionada, se muestra por grado y por cada grupo
     const uniqueGrades = [...new Set(records.map(r => r.GRADO).filter(Boolean))]
       .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
+    // Requerimiento 10: Cuando la opción todos está seleccionada, se muestra por grado y por cada grupo
     uniqueGrades.forEach(g => {
       const gRecords = records.filter(r => r.GRADO === g);
-      
+
       // Categoría del Grado completo
-      categories.push(`Grado ${g}°`);
+      data.categories.push(`Grado ${g}°`);
       const cG = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
       gRecords.forEach(r => {
-        const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO);
+        const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO, tipo);
         if (cG[info.key] !== undefined) cG[info.key]++;
       });
-      bajoArr.push(cG.Bajo);
-      basicoArr.push(cG.Basico);
-      altoArr.push(cG.Alto);
-      superiorArr.push(cG.Superior);
+      data.bajo.push(cG.Bajo);
+      data.basico.push(cG.Basico);
+      data.alto.push(cG.Alto);
+      data.superior.push(cG.Superior);
 
       // Grupos del grado
       const groups = [...new Set(gRecords.map(r => r.GRUPO).filter(Boolean))].sort();
       groups.forEach(grp => {
         const grpRecords = gRecords.filter(r => r.GRUPO === grp);
-        categories.push(`G ${g}°-${grp}`);
+        data.categories.push(`G ${g}°-${grp}`);
         const cGrp = { Bajo: 0, Basico: 0, Alto: 0, Superior: 0 };
         grpRecords.forEach(r => {
-          const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO);
+          const info = window.Filters.getDesempenoInfo(r.DESEMPEÑO, tipo);
           if (cGrp[info.key] !== undefined) cGrp[info.key]++;
         });
-        bajoArr.push(cGrp.Bajo);
-        basicoArr.push(cGrp.Basico);
-        altoArr.push(cGrp.Alto);
-        superiorArr.push(cGrp.Superior);
+        data.bajo.push(cGrp.Bajo);
+        data.basico.push(cGrp.Basico);
+        data.alto.push(cGrp.Alto);
+        data.superior.push(cGrp.Superior);
       });
     });
 
-    window.Charts.renderStackedPerformance(
-      'chart-desempenos-stacked',
-      categories,
-      bajoArr,
-      basicoArr,
-      altoArr,
-      superiorArr
-    );
+    return data;
+  }
+
+  function renderDesempenosModule() {
+    renderPedagogicalContextBar('context-banner-desempenos');
+
+    const records = state.currentFilteredRecords;
+    const tipos = getTiposPresentes(records);
+
+    renderLeyendaDesempenos(tipos);
+
+    // Datos apilados por escala y gráfica separada por tipo presente
+    const datosPorTipo = {};
+    tipos.forEach(tipo => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      datosPorTipo[tipo] = computeStackedData(recsTipo, tipo);
+    });
+
+    renderSplitCharts('split-chart-desempenos', tipos, (canvasId, tipo, escala) => {
+      const d = datosPorTipo[tipo];
+      window.Charts.renderStackedPerformance(
+        canvasId,
+        d.categories,
+        d.bajo,
+        d.basico,
+        d.alto,
+        d.superior,
+        { escala, niveles: window.Filters.getNiveles(tipo) }
+      );
+    });
 
     const tbody = document.getElementById('table-desempenos-body');
     if (tbody) {
+      const mixto = tipos.length > 1;
       let html = '';
-      categories.forEach((cat, idx) => {
-        const b = bajoArr[idx];
-        const bs = basicoArr[idx];
-        const a = altoArr[idx];
-        const s = superiorArr[idx];
-        const total = b + bs + a + s || 1;
-        const isGradeRow = cat.startsWith('Grado ');
+      tipos.forEach(tipo => {
+        const niveles = window.Filters.getNiveles(tipo);
+        const d = datosPorTipo[tipo];
+        const prefijo = mixto ? `${window.Filters.getEscala(tipo).etiqueta} · ` : '';
 
-        html += `
-          <tr style="${isGradeRow ? 'background-color:#f8fafc; font-weight:700;' : ''}">
-            <td><strong>${cat}</strong></td>
-            <td>${total}</td>
-            <td><span class="badge-desempeno badge-bajo">${b} (${((b/total)*100).toFixed(1)}%)</span></td>
-            <td><span class="badge-desempeno badge-basico">${bs} (${((bs/total)*100).toFixed(1)}%)</span></td>
-            <td><span class="badge-desempeno badge-alto">${a} (${((a/total)*100).toFixed(1)}%)</span></td>
-            <td><span class="badge-desempeno badge-superior">${s} (${((s/total)*100).toFixed(1)}%)</span></td>
-          </tr>`;
+        d.categories.forEach((cat, idx) => {
+          const valores = [d.bajo[idx], d.basico[idx], d.alto[idx], d.superior[idx]];
+          const total = valores.reduce((a, b) => a + b, 0) || 1;
+          const isGradeRow = cat.startsWith('Grado ');
+
+          const celdas = niveles.map((n, i) => {
+            const count = valores[i];
+            const pct = (count / total) * 100;
+            return `<td><span class="badge-desempeno badge-${n.key.toLowerCase()}" title="${n.label}">${count} (${pct.toFixed(1)}%)</span></td>`;
+          }).join('');
+
+          html += `
+            <tr style="${isGradeRow ? 'background-color:#f8fafc; font-weight:700;' : ''}">
+              <td><strong>${prefijo}${cat}</strong></td>
+              <td>${total}</td>
+              ${celdas}
+            </tr>`;
+        });
       });
-      tbody.innerHTML = html;
+      tbody.innerHTML = html || '<tr><td colspan="6" class="text-center">Sin datos disponibles</td></tr>';
     }
   }
 
@@ -990,51 +1469,82 @@ const App = (function() {
 
     const records = state.currentFilteredRecords;
     const filterState = window.Filters.getState();
-    const ciclos = (state.configs.institucion && state.configs.institucion.ciclos) ? state.configs.institucion.ciclos : {
-      "1": ["1", "2", "3"],
-      "2": ["4", "5"],
-      "3": ["6", "7"],
-      "4": ["8", "9"],
-      "5": ["10", "11"]
-    };
 
-    const cyclesData = {};
+    // Ciclos realmente presentes en el consolidado: se agrupan los grados con
+    // registros según su ciclo oficial. No se muestran ciclos sin datos ni
+    // grados que no aparezcan en el archivo.
+    const ciclos = {};
+    [...new Set(state.rawRecords.map(r => String(r.GRADO).trim()).filter(Boolean))]
+      .sort(window.Filters.compararGrados)
+      .forEach(grado => {
+        const cNum = window.Filters.getCicloForGrade(grado);
+        if (cNum === null) return;
+        if (!ciclos[cNum]) ciclos[cNum] = [];
+        ciclos[cNum].push(grado);
+      });
+
+    const tipos = getTiposPresentes(records);
     const tbody = document.getElementById('table-ciclos-body');
 
-    let html = '';
-    Object.entries(ciclos).forEach(([cNum, gList]) => {
-      const cRecords = records.filter(r => gList.includes(String(r.GRADO).trim()));
-      const scores = cRecords
-        .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
-        .filter(s => !isNaN(s));
-      const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-      
-      const label = `Ciclo ${cNum}`;
-      cyclesData[label] = {
-        promedio: avg,
-        totalEstudiantes: cRecords.length,
-        grados: gList.join('°, ') + '°'
-      };
+    // Promedios por ciclo calculados dentro de cada escala: nunca se mezclan
+    // puntajes periódicos (1-5) con puntajes Saber (0-500) en un mismo ciclo.
+    const cyclesDataPorTipo = {};
+    tipos.forEach(tipo => {
+      const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+      const cyclesData = {};
+      Object.entries(ciclos).forEach(([cNum, gList]) => {
+        const cRecords = recsTipo.filter(r => gList.includes(String(r.GRADO).trim()));
+        const scores = cRecords
+          .map(r => parseFloat(String(r.PUNTAJE).replace(',', '.')))
+          .filter(s => !isNaN(s));
+        const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
-      html += `
+        cyclesData[`Ciclo ${cNum}`] = {
+          promedio: avg,
+          totalEstudiantes: cRecords.length,
+          grados: gList.join('°, ') + '°'
+        };
+      });
+      cyclesDataPorTipo[tipo] = cyclesData;
+    });
+
+    // Tabla de estructura de ciclos: con escalas mixtas se genera una fila por
+    // ciclo y tipo de prueba para no promediar escalas distintas en una sola celda.
+    if (tbody) {
+      const mixto = tipos.length > 1;
+      let html = '';
+      tipos.forEach(tipo => {
+        const escala = window.Filters.getEscala(tipo);
+        Object.entries(ciclos).forEach(([cNum]) => {
+          const data = cyclesDataPorTipo[tipo][`Ciclo ${cNum}`];
+          const label = mixto ? `Ciclo ${cNum} · ${escala.etiqueta}` : `Ciclo ${cNum}`;
+
+          html += `
         <tr>
           <td><strong>${label}</strong></td>
-          <td>Grados: ${cyclesData[label].grados}</td>
-          <td>${cRecords.length}</td>
-          <td class="score-cell">${avg > 0 ? avg.toFixed(2) : '-'}</td>
+          <td>Grados: ${data.grados}</td>
+          <td>${data.totalEstudiantes}</td>
+          <td class="score-cell">${data.promedio > 0 ? data.promedio.toFixed(2) : '-'}</td>
           <td>
-            <button class="btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;" 
+            <button class="btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;"
               onclick="Filters.setFilter('ciclo', '${cNum}')">
               Filtrar Ciclo
             </button>
           </td>
         </tr>`;
+        });
+      });
+      tbody.innerHTML = html;
+    }
+
+    // Comparativa inter-ciclos separada por escala (una sola gráfica cuando la
+    // institución usa un único tipo de prueba)
+    renderSplitCharts('split-chart-ciclos-comparison', tipos, (canvasId, tipo, escala) => {
+      window.Charts.renderCyclesComparison(canvasId, cyclesDataPorTipo[tipo], { escala });
     });
 
-    if (tbody) tbody.innerHTML = html;
-    window.Charts.renderCyclesComparison('chart-ciclos-comparison', cyclesData);
-
-    // Requerimiento 11: Desglose de grados y grupos por ciclo cuando se selecciona 'todos' o un ciclo
+    // Requerimiento 11: Desglose de grados y grupos por ciclo cuando se selecciona 'todos' o un ciclo.
+    // También separado por escala para no mezclar puntajes en un mismo eje.
     const drilldownCard = document.getElementById('card-ciclos-drilldown');
     if (drilldownCard) {
       drilldownCard.style.display = 'block';
@@ -1042,7 +1552,10 @@ const App = (function() {
       if (filterState.ciclo !== 'todos' && ciclos[filterState.ciclo]) {
         activeCiclos = { [filterState.ciclo]: ciclos[filterState.ciclo] };
       }
-      window.Charts.renderCyclesDrilldown('chart-ciclos-drilldown', records, activeCiclos);
+      renderSplitCharts('split-chart-ciclos-drilldown', tipos, (canvasId, tipo, escala) => {
+        const recsTipo = records.filter(r => window.Filters.getTipoPrueba(r.PRUEBA) === tipo);
+        window.Charts.renderCyclesDrilldown(canvasId, recsTipo, activeCiclos, { escala });
+      });
     }
   }
 
@@ -1108,8 +1621,12 @@ const App = (function() {
     const tests = state.rawRecords.filter(r => window.Filters.normalizarNombre(r.ESTUDIANTE) === norm);
     if (tests.length === 0) return;
 
-    const orderMap = { 'ALFA': 1, 'BETA': 2, 'GAMMA': 3 };
-    tests.sort((a, b) => (orderMap[a.PRUEBA] || 99) - (orderMap[b.PRUEBA] || 99));
+    const order = new Map(getAvailablePruebas().map((code, idx) => [code, idx]));
+    const orderOf = (value) => {
+      const code = pruebaCode(value);
+      return order.has(code) ? order.get(code) : order.size + 1;
+    };
+    tests.sort((a, b) => orderOf(a.PRUEBA) - orderOf(b.PRUEBA));
 
     const latest = tests[tests.length - 1];
     setText('modal-student-name', latest.ESTUDIANTE);
@@ -1118,10 +1635,12 @@ const App = (function() {
     const tbody = document.getElementById('modal-student-history-body');
     if (tbody) {
       tbody.innerHTML = tests.map(t => {
-        const info = window.Filters.getDesempenoInfo(t.DESEMPEÑO);
+        const info = window.Filters.getDesempenoInfo(t.DESEMPEÑO, window.Filters.getTipoPrueba(t.PRUEBA));
+        // Columna de Lenguaje según la escala de la prueba (LENGUAJE o LECTURA CRÍTICA)
+        const colLenguaje = window.Filters.getAreaColumn('Lenguaje', window.Filters.getTipoPrueba(t.PRUEBA));
         return `
           <tr>
-            <td><strong>Misión ${t.PRUEBA}</strong></td>
+            <td><strong>${escapeHtml(pruebaLabel(t.PRUEBA))}</strong></td>
             <td>Grado ${t.GRADO}° (${t.GRUPO})</td>
             <td>Puesto ${t.PUESTO || '-'}</td>
             <td class="score-cell">${t.PUNTAJE}</td>
@@ -1130,7 +1649,7 @@ const App = (function() {
                 <span class="badge-dot"></span> ${info.label}
               </span>
             </td>
-            <td>${t.LENGUAJE || '-'}</td>
+            <td>${t[colLenguaje] || '-'}</td>
             <td>${t['MATEMÁTICAS'] || '-'}</td>
             <td>${t['CIENCIAS NATURALES'] || '-'}</td>
             <td>${t['SOCIALES Y CIUDADANAS'] || '-'}</td>
@@ -1140,20 +1659,27 @@ const App = (function() {
       }).join('');
     }
 
-    const studentTestsData = tests.map(t => ({
-      prueba: t.PRUEBA,
-      puntaje: parseFloat(String(t.PUNTAJE).replace(',', '.')) || 0
-    }));
+    // Una gráfica por cada tipo de prueba presente en la trayectoria del estudiante
+    const tiposStudent = getTiposPresentes(tests);
 
-    // Gráfico 1: Evolución temporal del puntaje global
-    window.Charts.renderStudentHistory('chart-student-modal-history', studentTestsData);
+    // Gráfico 1: Evolución temporal del puntaje global por escala
+    renderSplitCharts('split-chart-student-history', tiposStudent, (canvasId, tipo, escala) => {
+      const testsTipo = tests.filter(t => window.Filters.getTipoPrueba(t.PRUEBA) === tipo);
+      if (testsTipo.length === 0) return;
+      const studentTestsData = testsTipo.map(t => ({
+        prueba: t.PRUEBA,
+        puntaje: parseFloat(String(t.PUNTAJE).replace(',', '.')) || 0
+      }));
+      window.Charts.renderStudentHistory(canvasId, studentTestsData, { escala });
+    });
 
-    // Requerimiento 9: Comparativa de desempeño en cada área en las 3 pruebas (Alfa, Beta, Gamma)
-    window.Charts.renderStudentAreasComparison(
-      'chart-student-modal-areas-comparison',
-      tests,
-      ['Lenguaje', 'Matematicas', 'Ciencias Naturales', 'Sociales', 'Ingles']
-    );
+    // Requerimiento 9: Comparativa de desempeño en cada área por escala.
+    // Las barras son puntajes de ÁREA: se pasa la escala de áreas (0–100 en Saber).
+    renderSplitCharts('split-chart-student-areas', tiposStudent, (canvasId, tipo, escala) => {
+      const testsTipo = tests.filter(t => window.Filters.getTipoPrueba(t.PRUEBA) === tipo);
+      if (testsTipo.length === 0) return;
+      window.Charts.renderStudentAreasComparison(canvasId, testsTipo, getAreasResueltas(tipo), { escala: window.Filters.getEscalaArea(tipo) });
+    });
 
     const modalBackdrop = document.getElementById('student-modal-backdrop');
     if (modalBackdrop) modalBackdrop.classList.add('active');
@@ -1163,13 +1689,22 @@ const App = (function() {
   // MÓDULO 8: Centro de Exportación
   // ==========================================================================
 
+  /**
+   * Etiqueta visible de un tipo de prueba para resúmenes y exportación,
+   * tomada de la escala configurada; nunca un tipo supuesto.
+   */
+  function etiquetaTipo(tipo) {
+    if (tipo === 'todos') return 'Todos';
+    return window.Filters.getEscala(tipo).etiqueta;
+  }
+
   function renderExportacionModule() {
     const records = state.currentFilteredRecords;
     const filterState = window.Filters.getState();
 
     setText('export-count-records', `${records.length} registros listos para exportar`);
     setText('export-filter-summary', `
-      Filtros: Tipo [${filterState.tipoPrueba}], Prueba [${filterState.prueba}], 
+      Filtros: Tipo [${etiquetaTipo(filterState.tipoPrueba)}], Prueba [${filterState.prueba}], 
       Ciclo [${filterState.ciclo}], Grado [${filterState.grado}], Grupo [${filterState.grupo}]
     `);
   }

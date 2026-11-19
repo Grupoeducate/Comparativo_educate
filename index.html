@@ -46,12 +46,12 @@
           <div class="form-group">
             <label for="login-dane">Código DANE Institucional</label>
             <input type="text" id="login-dane" placeholder="Ingrese el código DANE" value="" required autofocus autocomplete="username">
-            <div class="auth-hint">Código asignado por el Ministerio de Educación</div>
+            <div class="auth-hint">La institución debe estar registrada en config/usuarios.json</div>
           </div>
           <div class="form-group">
             <label for="login-pin">Clave de Acceso (4 dígitos)</label>
             <input type="password" id="login-pin" placeholder="••••" maxlength="4" value="" required autocomplete="current-password">
-            <div class="auth-hint">Clave numérica de 4 dígitos institucional (config/usuarios.json)</div>
+            <div class="auth-hint">Debe coincidir con la clave registrada y existir la carpeta data/{DANE}/</div>
           </div>
           <button type="submit" class="btn-login">Ingresar al Visor</button>
         </form>
@@ -186,35 +186,22 @@
         </div>
 
         <div class="filters-grid">
-          <!-- 1. Tipo de Prueba (Por defecto 'periodica' al no haber Saber) -->
+          <!-- 1. Tipo de Prueba (las opciones se derivan del consolidado en js/filters.js) -->
           <div class="filter-control">
             <label for="filter-tipo-prueba">Tipo de Prueba</label>
-            <select id="filter-tipo-prueba" class="filter-select">
-              <option value="todos">Todos los Tipos</option>
-              <option value="periodica" selected>Periódica (Alfa, Beta, Gamma)</option>
-              <option value="saber">Pruebas Saber</option>
-            </select>
+            <select id="filter-tipo-prueba" class="filter-select"></select>
           </div>
 
           <!-- 2. Prueba Específica -->
           <div class="filter-control">
             <label for="filter-prueba">Prueba</label>
-            <select id="filter-prueba" class="filter-select">
-              <option value="todos">Todas las Pruebas</option>
-            </select>
+            <select id="filter-prueba" class="filter-select"></select>
           </div>
 
-          <!-- 3. Ciclo -->
+          <!-- 3. Ciclo (las opciones se derivan del consolidado en js/filters.js) -->
           <div class="filter-control">
             <label for="filter-ciclo">Ciclo Educativo</label>
-            <select id="filter-ciclo" class="filter-select">
-              <option value="todos">Todos los Ciclos</option>
-              <option value="1">Ciclo 1 (1°, 2°, 3°)</option>
-              <option value="2">Ciclo 2 (4°, 5°)</option>
-              <option value="3">Ciclo 3 (6°, 7°)</option>
-              <option value="4">Ciclo 4 (8°, 9°)</option>
-              <option value="5">Ciclo 5 (10°, 11°)</option>
-            </select>
+            <select id="filter-ciclo" class="filter-select"></select>
           </div>
 
           <!-- 4. Grado -->
@@ -300,7 +287,8 @@
               </div>
               <div class="kpi-value" id="kpi-promedio-general">-</div>
               <div class="kpi-footer">
-                <span id="kpi-promedio-badge" class="badge-desempeno badge-superior">Escala 1.0 a 5.0</span>
+                <span id="kpi-promedio-badge" class="badge-desempeno badge-mixta">Escala según tipo de prueba</span>
+                <span id="kpi-promedio-hint" style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.15rem;"></span>
               </div>
             </div>
 
@@ -355,11 +343,11 @@
             <div class="executive-card col-8">
               <div class="card-header">
                 <div class="card-title">Promedio Comparativo por Área Académica</div>
-                <div class="card-subtitle">Puntaje escala 1.0 a 5.0 (con valores numéricos directos)</div>
+                <div class="card-subtitle">Promedios según la escala de cada ÁREA, con valores numéricos directos</div>
               </div>
               <div class="card-body">
-                <div class="chart-container">
-                  <canvas id="chart-dashboard-areas"></canvas>
+                <div class="split-charts" id="split-chart-dashboard-areas">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -367,11 +355,11 @@
             <div class="executive-card col-4">
               <div class="card-header">
                 <div class="card-title">Distribución Institucional</div>
-                <div class="card-subtitle">Niveles de desempeño oficial</div>
+                <div class="card-subtitle">Niveles oficiales de desempeño según la escala de cada tipo de prueba</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 250px;">
-                  <canvas id="chart-dashboard-donut"></canvas>
+                <div class="split-charts" id="split-chart-dashboard-donut">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -389,7 +377,7 @@
                         <th>Grado</th>
                         <th>Estudiantes Evaluados</th>
                         <th>Promedio Global</th>
-                        <th style="min-width:320px;">Desempeños (Bajo / Básico / Alto / Superior) y Distribución Apilada</th>
+                        <th style="min-width:320px;">Desempeños según la escala de cada tipo de prueba y Distribución Apilada</th>
                       </tr>
                     </thead>
                     <tbody id="dashboard-grades-table-body">
@@ -409,7 +397,7 @@
           <div class="section-header">
             <div class="section-title-group">
               <h2>Evolución Institucional</h2>
-              <p>Trayectoria y crecimiento comparativo: Misión Alfa → Misión Beta → Misión Gamma</p>
+              <p>Trayectoria y crecimiento comparativo entre las pruebas del consolidado, según la escala de cada tipo de prueba</p>
             </div>
           </div>
 
@@ -420,8 +408,8 @@
                 <div class="card-subtitle">Evolución de promedios entre aplicaciones. (Toque el nombre de un área para ocultar o mostrar su línea)</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 340px;">
-                  <canvas id="chart-evolucion-general"></canvas>
+                <div class="split-charts" id="split-chart-evolucion">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -429,7 +417,7 @@
             <div class="executive-card col-12">
               <div class="card-header">
                 <div class="card-title">Matriz Comparativa de Aplicaciones</div>
-                <div class="card-subtitle">Promedios generales y desglose de áreas por prueba</div>
+                <div class="card-subtitle">Promedios generales (puntaje global) y desglose de áreas (escala de áreas) por prueba</div>
               </div>
               <div class="card-body" style="padding:0;">
                 <div class="table-responsive">
@@ -437,10 +425,11 @@
                     <thead>
                       <tr>
                         <th>Prueba</th>
+                        <th>Escala</th>
                         <th>Evaluados</th>
                         <th>Promedio Global</th>
                         <th>Variación (Delta)</th>
-                        <th>Lenguaje</th>
+                        <th>Lenguaje / L. Crítica</th>
                         <th>Matemáticas</th>
                         <th>C. Naturales</th>
                         <th>Sociales</th>
@@ -462,9 +451,8 @@
                 <div class="card-subtitle">Rendimiento por área para cada grupo de los grados seleccionados</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 400px;">
-                  <canvas id="chart-evolucion-grados-grupos"></canvas>
-                </div>
+                <!-- Gráfica separada por escala: periódicas (1 a 5) y Saber (0 a 500) -->
+                <div class="split-charts" id="split-chart-evolucion-grupos"></div>
               </div>
             </div>
           </div>
@@ -546,9 +534,8 @@
                 <div class="card-subtitle" id="subtitle-chart-area-components">Puntajes obtenidos vs máximo esperado</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 320px;">
-                  <canvas id="chart-area-components"></canvas>
-                </div>
+                <!-- Gráfica separada por escala: periódicas (1 a 5) y Saber (0 a 500) -->
+                <div class="split-charts" id="split-chart-area-components"></div>
               </div>
             </div>
           </div>
@@ -561,42 +548,27 @@
           <div class="section-header">
             <div class="section-title-group">
               <h2>Distribución de Desempeños</h2>
-              <p>Visualización de concentración en niveles oficiales: Bajo, Básico, Alto y Superior</p>
+              <p>Visualización de concentración en los niveles oficiales según la escala de cada tipo de prueba</p>
             </div>
           </div>
 
           <!-- Barra de Contexto Pedagógico (Grado y Grupos seleccionados) -->
           <div id="context-banner-desempenos"></div>
 
-          <!-- Leyenda Oficial de Colores -->
-          <div class="distribution-legend">
-            <div class="legend-item">
-              <span class="legend-color-box" style="background:var(--color-bajo);"></span>
-              <span>Bajo (#bf0000)</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-color-box" style="background:var(--color-basico);"></span>
-              <span>Básico (#ffbf00)</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-color-box" style="background:var(--color-alto);"></span>
-              <span>Alto (#01b1f0)</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-color-box" style="background:var(--color-superior);"></span>
-              <span>Superior (#01af51)</span>
-            </div>
+          <!-- Leyenda Oficial de Colores (construida por app.js según las escalas presentes) -->
+          <div class="distribution-legend" id="leyenda-desempenos">
+            <!-- Renderizado dinámicamente -->
           </div>
 
           <div class="card-grid">
             <div class="executive-card col-12">
               <div class="card-header">
                 <div class="card-title" id="title-chart-desempenos-stacked">Distribución Apilada de Desempeños (100% Stacked)</div>
-                <div class="card-subtitle">Proporción de estudiantes en cada nivel de desempeño por grado y grupos</div>
+                <div class="card-subtitle">Proporción de estudiantes en cada nivel oficial según la escala de cada tipo de prueba</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 360px;">
-                  <canvas id="chart-desempenos-stacked"></canvas>
+                <div class="split-charts" id="split-chart-desempenos">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -612,10 +584,10 @@
                       <tr>
                         <th>Categoría</th>
                         <th>Total Estudiantes</th>
-                        <th>Bajo</th>
-                        <th>Básico</th>
-                        <th>Alto</th>
-                        <th>Superior</th>
+                        <th>Bajo / Insuficiente</th>
+                        <th>Básico / Mínimo</th>
+                        <th>Alto / Satisfactorio</th>
+                        <th>Superior / Avanzado</th>
                       </tr>
                     </thead>
                     <tbody id="table-desempenos-body">
@@ -646,11 +618,12 @@
             <div class="executive-card col-7">
               <div class="card-header">
                 <div class="card-title">Comparativa de Rendimiento Inter-ciclos</div>
-                <div class="card-subtitle">Promedio ponderado por ciclo educativo</div>
+                <div class="card-subtitle">Promedio ponderado por ciclo educativo, separado por escala</div>
               </div>
               <div class="card-body">
-                <div class="chart-container">
-                  <canvas id="chart-ciclos-comparison"></canvas>
+                <!-- Gráfica separada por escala: periódicas (1 a 5) y Saber (0 a 500) -->
+                <div class="split-charts" id="split-chart-ciclos-comparison">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -684,11 +657,12 @@
             <div class="executive-card col-12" id="card-ciclos-drilldown" style="margin-top:1.25rem;">
               <div class="card-header">
                 <div class="card-title">Desglose de Todos los Grados y Grupos por Ciclo</div>
-                <div class="card-subtitle">Rendimiento promedio de cada grupo dentro de su ciclo correspondiente</div>
+                <div class="card-subtitle">Rendimiento promedio de cada grupo dentro de su ciclo, separado por escala</div>
               </div>
               <div class="card-body">
-                <div class="chart-container" style="min-height: 350px;">
-                  <canvas id="chart-ciclos-drilldown"></canvas>
+                <!-- Gráfica separada por escala: periódicas (1 a 5) y Saber (0 a 500) -->
+                <div class="split-charts" id="split-chart-ciclos-drilldown">
+                  <!-- Bloques por escala renderizados dinámicamente -->
                 </div>
               </div>
             </div>
@@ -799,19 +773,19 @@
       </div>
 
       <div class="modal-body">
-        <!-- Gráfico 1: Evolución de Puntaje Global -->
+        <!-- Gráfico 1: Evolución de Puntaje Global (una gráfica por escala presente) -->
         <div style="margin-bottom:1.5rem;">
-          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Evolución de Puntaje Global (Alfa → Beta → Gamma)</h4>
-          <div class="chart-container" style="min-height:220px; max-height:240px;">
-            <canvas id="chart-student-modal-history"></canvas>
+          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Evolución de Puntaje Global por Tipo de Prueba (según la escala de cada tipo)</h4>
+          <div class="split-charts" id="split-chart-student-history">
+            <!-- Bloques por escala renderizados dinámicamente -->
           </div>
         </div>
 
-        <!-- Gráfico 2: Desempeño por Área en las Tres Pruebas (Requerimiento 9) -->
+        <!-- Gráfico 2: Desempeño por Área en cada Prueba (Requerimiento 9) -->
         <div style="margin-bottom:1.5rem;">
-          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Desempeño por Área en las Tres Pruebas (Comparativa Alfa, Beta, Gamma)</h4>
-          <div class="chart-container" style="min-height:260px; max-height:280px;">
-            <canvas id="chart-student-modal-areas-comparison"></canvas>
+          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.75rem;">Desempeño por Área en cada Prueba (según la escala de cada tipo)</h4>
+          <div class="split-charts" id="split-chart-student-areas">
+            <!-- Bloques por escala renderizados dinámicamente -->
           </div>
         </div>
 
@@ -826,7 +800,7 @@
                 <th>Puesto</th>
                 <th>Puntaje</th>
                 <th>Desempeño</th>
-                <th>Lenguaje</th>
+                <th>Lenguaje / L. Crítica</th>
                 <th>Matemáticas</th>
                 <th>C. Naturales</th>
                 <th>Sociales</th>
