@@ -17,6 +17,13 @@
       "clave": "6754",
       "nombre": "COLEGIO LA CONCEPCION IED",
       "ciudad": "SOACHA"
+    },
+    
+    {
+      "dane": "325307000110",
+      "clave": "0110",
+      "nombre": " INSTITUTO KENNEDY LTDA",
+      "ciudad": "GIRARDOT"
     }
   ]
 }
