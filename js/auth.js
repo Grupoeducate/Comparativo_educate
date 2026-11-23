@@ -15,6 +15,12 @@ const Auth = (function() {
   let usersList = [];
   let authCallbacks = [];
 
+  /**
+   * Inicializa el módulo de autenticación con la configuración institucional y la lista de usuarios.
+   * @param {Object} configInst - Configuración de la institución (config/institucion.json).
+   * @param {Object} configUsers - Configuración de usuarios (config/usuarios.json).
+   * @returns {boolean} true si la sesión restaurada sigue siendo válida.
+   */
   function init(configInst, configUsers) {
     institucionData = configInst || {};
     usersList = (configUsers && configUsers.usuarios) ? configUsers.usuarios : [];
@@ -25,10 +31,20 @@ const Auth = (function() {
     return isAuthed;
   }
 
+  /**
+   * Normaliza un valor eliminando espacios y convirtiendo a cadena.
+   * @param {*} value - Valor a normalizar.
+   * @returns {string} Valor normalizado.
+   */
   function normalize(value) {
     return String(value === undefined || value === null ? '' : value).trim();
   }
 
+  /**
+   * Busca un usuario por su código DANE.
+   * @param {string} dane - Código DANE a buscar.
+   * @returns {Object|null} Usuario encontrado o null.
+   */
   function findUser(dane) {
     const cleanDane = normalize(dane);
     if (!cleanDane) return null;
@@ -67,6 +83,10 @@ const Auth = (function() {
     return false;
   }
 
+  /**
+   * Indica si existe una sesión autenticada válida en sessionStorage.
+   * @returns {boolean} true si está autenticado.
+   */
   function isAuthenticated() {
     const session = getSession();
     return !!(session && session.authenticated === true && session.dane);
@@ -79,6 +99,10 @@ const Auth = (function() {
     return !!findUser(session.dane);
   }
 
+  /**
+   * Obtiene la sesión almacenada en sessionStorage.
+   * @returns {Object|null} Sesión parseada o null si no existe o es inválida.
+   */
   function getSession() {
     try {
       const stored = sessionStorage.getItem(SESSION_KEY);
@@ -88,10 +112,19 @@ const Auth = (function() {
     }
   }
 
+  /**
+   * Elimina la sesión almacenada.
+   */
   function clearSession() {
     sessionStorage.removeItem(SESSION_KEY);
   }
 
+  /**
+   * Intenta autenticar a una institución con DANE y clave.
+   * @param {string} daneInput - Código DANE ingresado.
+   * @param {string} claveInput - Clave institucional ingresada.
+   * @returns {Promise<Object>} Resultado con success, reason/message o user.
+   */
   async function login(daneInput, claveInput) {
     const cleanDane = normalize(daneInput);
     const cleanClave = normalize(claveInput);
@@ -146,17 +179,28 @@ const Auth = (function() {
     return { success: true, user: sessionData };
   }
 
+  /**
+   * Cierra la sesión actual y notifica a los listeners.
+   */
   function logout() {
     clearSession();
     notify(false);
   }
 
+  /**
+   * Registra un callback que se invoca ante cambios de estado de autenticación.
+   * @param {Function} cb - Función callback (isAuthed, session).
+   */
   function onAuthStateChanged(cb) {
     if (typeof cb === 'function') {
       authCallbacks.push(cb);
     }
   }
 
+  /**
+   * Notifica a los listeners registrados sobre un cambio de estado de autenticación.
+   * @param {boolean} isAuthed - Estado de autenticación.
+   */
   function notify(isAuthed) {
     const session = getSession();
     authCallbacks.forEach(cb => {

@@ -173,7 +173,7 @@ const App = (function() {
           const res = await fetch(p);
           if (res.ok) {
             csvText = await res.text();
-            console.log(`[Educate 360°] Datos cargados exitosamente desde: ${p}`);
+            // console.log(`[Educate 360°] Datos cargados exitosamente desde: ${p}`);
             break;
           }
         } catch (e) {
@@ -339,6 +339,11 @@ const App = (function() {
     }
   }
 
+  /**
+   * Muestra u oculta la capa de autenticación.
+   * @param {boolean} show - Indica si la capa debe mostrarse.
+   */
+
   function showLoginOverlay(show) {
     const overlay = document.getElementById('auth-overlay');
     if (overlay) {
@@ -353,6 +358,11 @@ const App = (function() {
       }
     }
   }
+
+  /**
+   * Actualiza la interfaz de usuario con los datos de la sesión activa.
+   * @param {object} session - Sesión autenticada del usuario.
+   */
 
   function updateUserUI(session) {
     const instNameEl = document.getElementById('top-inst-name');
@@ -420,6 +430,11 @@ const App = (function() {
     });
   }
 
+  /**
+   * Cambia el módulo activo y actualiza la vista correspondiente.
+   * @param {string} moduleName - Nombre del módulo a activar.
+   */
+
   function switchModule(moduleName) {
     state.activeModule = moduleName;
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -437,6 +452,10 @@ const App = (function() {
 
     renderActiveModule();
   }
+
+  /**
+   * Renderiza el módulo actualmente activo según el estado de la aplicación.
+   */
 
   function renderActiveModule() {
     switch (state.activeModule) {
@@ -561,6 +580,11 @@ const App = (function() {
       </div>
     `;
   }
+
+  /**
+   * Selecciona rápidamente un grupo aplicando el filtro correspondiente.
+   * @param {string} grupo - Grupo a seleccionar.
+   */
 
   function quickSelectGrupo(grupo) {
     window.Filters.setFilter('grupo', grupo);
@@ -710,6 +734,10 @@ const App = (function() {
     });
     return distribution;
   }
+
+  /**
+   * Renderiza el módulo del Dashboard Ejecutivo.
+   */
 
   function renderDashboardModule() {
     const records = state.currentFilteredRecords;
@@ -996,6 +1024,10 @@ const App = (function() {
     return { generalAverages, areaAveragesMap };
   }
 
+  /**
+   * Renderiza el módulo de Evolución Institucional.
+   */
+
   function renderEvolucionModule() {
     const records = state.currentFilteredRecords;
     // La matriz solo muestra las pruebas que sobreviven a los filtros activos
@@ -1134,6 +1166,10 @@ const App = (function() {
   // MÓDULO 3: Ranking Institucional
   // ==========================================================================
 
+  /**
+   * Renderiza el módulo de Ranking Institucional.
+   */
+
   function renderRankingModule() {
     const records = state.currentFilteredRecords;
     const tbody = document.getElementById('table-ranking-body');
@@ -1192,6 +1228,10 @@ const App = (function() {
   // ==========================================================================
   // MÓDULO 4: Seguimiento por Área y Componentes (Detalle Pedagógico)
   // ==========================================================================
+
+  /**
+   * Renderiza el módulo de Seguimiento por Área.
+   */
 
   function renderAreasModule() {
     renderPedagogicalContextBar('context-banner-areas');
@@ -1323,6 +1363,11 @@ const App = (function() {
     });
   }
 
+  /**
+   * Establece el área seleccionada para el seguimiento por área.
+   * @param {string} area - Nombre del área seleccionada.
+   */
+
   function setSelectedArea(areaName) {
     state.selectedArea = areaName;
     renderAreasModule();
@@ -1400,6 +1445,10 @@ const App = (function() {
     return data;
   }
 
+  /**
+   * Renderiza el módulo de Distribución de Desempeños.
+   */
+
   function renderDesempenosModule() {
     renderPedagogicalContextBar('context-banner-desempenos');
 
@@ -1463,6 +1512,10 @@ const App = (function() {
   // ==========================================================================
   // MÓDULO 6: Consulta por Ciclo (Detalle Pedagógico)
   // ==========================================================================
+
+  /**
+   * Renderiza el módulo de Consulta por Ciclo.
+   */
 
   function renderCiclosModule() {
     renderPedagogicalContextBar('context-banner-ciclos');
@@ -1562,6 +1615,10 @@ const App = (function() {
   // ==========================================================================
   // MÓDULO 7: Trazabilidad de Estudiantes (Detalle Pedagógico)
   // ==========================================================================
+
+  /**
+   * Renderiza el módulo de Trazabilidad del Estudiante.
+   */
 
   function renderTrazabilidadModule() {
     renderPedagogicalContextBar('context-banner-trazabilidad');
@@ -1698,6 +1755,10 @@ const App = (function() {
     return window.Filters.getEscala(tipo).etiqueta;
   }
 
+  /**
+   * Renderiza el módulo de Centro de Exportación.
+   */
+
   function renderExportacionModule() {
     const records = state.currentFilteredRecords;
     const filterState = window.Filters.getState();
@@ -1713,19 +1774,41 @@ const App = (function() {
   // Funciones Auxiliares
   // ==========================================================================
 
+  /**
+   * Establece el texto de un elemento del DOM por su id.
+   * @param {string} id - Identificador del elemento.
+   * @param {*} text - Texto a asignar.
+   */
+
   function setText(id, text) {
     const el = document.getElementById(id);
     if (el) el.textContent = text !== undefined && text !== null ? text : '';
   }
+
+  /**
+   * Muestra u oculta el indicador de carga global.
+   * @param {boolean} show - Indica si debe mostrarse.
+   */
 
   function showLoading(show) {
     const loader = document.getElementById('global-loader');
     if (loader) loader.style.display = show ? 'flex' : 'none';
   }
 
+  /**
+   * Muestra un mensaje de error global al usuario.
+   * @param {string} msg - Mensaje de error.
+   */
+
   function showGlobalError(msg) {
     alert(msg);
   }
+
+  /**
+   * Escapa caracteres especiales de HTML en una cadena.
+   * @param {string} str - Cadena a escapar.
+   * @returns {string} Cadena con los caracteres HTML escapados.
+   */
 
   function escapeHtml(str) {
     return String(str || '')
@@ -1734,6 +1817,12 @@ const App = (function() {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  /**
+   * Escapa comillas simples y dobles para uso seguro en JavaScript.
+   * @param {string} str - Cadena a escapar.
+   * @returns {string} Cadena escapada.
+   */
 
   function escapeForJs(str) {
     return String(str || '').replace(/'/g, "\\'").replace(/"/g, '\\"');

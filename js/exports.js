@@ -7,7 +7,10 @@
 const Exports = (function() {
 
   /**
-   * Exporta a Excel (.xlsx o CSV compatible con Excel BOM UTF-8)
+   * Exporta los registros filtrados a Excel (.xlsx) o, si SheetJS no está disponible, a CSV con BOM UTF-8.
+   * @param {Array<Object>} records - Registros filtrados a exportar.
+   * @param {Object} institucionConfig - Configuración de la institución.
+   * @param {Object} filterState - Estado actual de los filtros.
    */
   function exportFilteredData(records, institucionConfig, filterState) {
     if (!records || records.length === 0) {
