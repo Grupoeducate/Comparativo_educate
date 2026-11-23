@@ -18,12 +18,17 @@
       "nombre": "COLEGIO LA CONCEPCION IED",
       "ciudad": "SOACHA"
     },
-    
     {
       "dane": "325307000110",
       "clave": "0110",
       "nombre": " INSTITUTO KENNEDY LTDA",
       "ciudad": "GIRARDOT"
+    },
+    {
+      "dane": "108001003114",
+      "clave": "3114",
+      "nombre": "INSTITUCION EDUCATIVA DISTRITAL NUEVA GRANADA",
+      "ciudad": "BARRANQUILLA"
     }
   ]
 }
