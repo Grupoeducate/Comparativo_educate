@@ -29,6 +29,12 @@
       "clave": "3114",
       "nombre": "INSTITUCION EDUCATIVA DISTRITAL NUEVA GRANADA",
       "ciudad": "BARRANQUILLA"
+    },
+     {
+      "dane": "308758002351",
+      "clave": "2351",
+      "nombre": "I.E. TECNICA COSMOPOLITANO DE COLOMBIA",
+      "ciudad": "SOLEDAD"
     }
   ]
 }
